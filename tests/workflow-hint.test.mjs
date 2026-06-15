@@ -2,58 +2,67 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
 describe("workflow-hint plugin", () => {
-  let WorkflowHintPlugin
+  async function loadHook() {
+    const mod = await import("../plugins/workflow-hint.js")
+    const hooks = await mod.WorkflowHintPlugin({})
+    return hooks["tool.execute.before"]
+  }
 
   it("module exports WorkflowHintPlugin function", async () => {
     const mod = await import("../plugins/workflow-hint.js")
-    WorkflowHintPlugin = mod.WorkflowHintPlugin
-    assert.equal(typeof WorkflowHintPlugin, "function")
+    assert.equal(typeof mod.WorkflowHintPlugin, "function")
   })
 
-  it('包含 "并行" → 返回提示', async () => {
+  it("does not export helper functions as legacy plugin entries", async () => {
     const mod = await import("../plugins/workflow-hint.js")
-    const hint = mod.getWorkflowHint("我需要并行执行多个任务")
-    assert.notEqual(hint, null)
-    assert.ok(hint.includes("workflow-hint"))
+    const functionExports = Object.entries(mod)
+      .filter(([, value]) => typeof value === "function")
+      .map(([name]) => name)
+
+    assert.deepEqual(functionExports, ["WorkflowHintPlugin"])
   })
 
-  it('包含 "workflow" → 返回提示', async () => {
-    const mod = await import("../plugins/workflow-hint.js")
-    const hint = mod.getWorkflowHint("请用 workflow 编排这些步骤")
-    assert.notEqual(hint, null)
-    assert.ok(hint.includes("workflow-hint"))
+  it("任何 task 调用都抛出 shared policy 提示", async () => {
+    const hook = await loadHook()
+    await assert.rejects(
+      () => hook({ tool: "task" }, { args: { prompt: "帮我写一个 hello world 函数" } }),
+      /subagent-dispatch/,
+    )
   })
 
-  it('包含 "多个 agent" → 返回提示', async () => {
-    const mod = await import("../plugins/workflow-hint.js")
-    const hint = mod.getWorkflowHint("用多个 agent 同时处理")
-    assert.notEqual(hint, null)
-    assert.ok(hint.includes("workflow-hint"))
+  it("提示内容包含 workflow 推荐", async () => {
+    const hook = await loadHook()
+    try {
+      await hook({ tool: "task" }, { args: { prompt: "do work" } })
+      assert.fail("should throw")
+    } catch (err) {
+      assert.ok(err.message.includes("workflow 脚本编排"))
+    }
   })
 
-  it("普通文本 → 返回 null", async () => {
-    const mod = await import("../plugins/workflow-hint.js")
-    const hint = mod.getWorkflowHint("帮我写一个 hello world 函数")
-    assert.equal(hint, null)
+  it("提示内容包含 DAG/后台/worktree 通用约束", async () => {
+    const hook = await loadHook()
+    try {
+      await hook({ tool: "task" }, { args: { prompt: "do work" } })
+      assert.fail("should throw")
+    } catch (err) {
+      assert.ok(err.message.includes("git worktree 隔离"))
+      assert.ok(err.message.includes("后台模式"))
+      assert.ok(err.message.includes("skip-dag-hint"))
+    }
   })
 
-  it('返回的提示包含 "workflow-hint" 关键字', async () => {
-    const mod = await import("../plugins/workflow-hint.js")
-    const hint = mod.getWorkflowHint("同时做三件事")
-    assert.notEqual(hint, null)
-    assert.ok(typeof hint === "string")
-    assert.ok(hint.includes("workflow-hint"))
+  it("skip-workflow-hint → 放行", async () => {
+    const hook = await loadHook()
+    await assert.doesNotReject(() =>
+      hook({ tool: "task" }, { args: { prompt: "同时执行三个探索任务 skip-workflow-hint" } }),
+    )
   })
 
-  it('包含 "并发" → 返回提示', async () => {
-    const mod = await import("../plugins/workflow-hint.js")
-    const hint = mod.getWorkflowHint("需要并发调研")
-    assert.notEqual(hint, null)
-  })
-
-  it('包含 "同时" → 返回提示', async () => {
-    const mod = await import("../plugins/workflow-hint.js")
-    const hint = mod.getWorkflowHint("同时执行三个探索任务")
-    assert.notEqual(hint, null)
+  it("非 task 工具 → 放行", async () => {
+    const hook = await loadHook()
+    await assert.doesNotReject(() =>
+      hook({ tool: "bash" }, { args: { command: "ls" } }),
+    )
   })
 })
