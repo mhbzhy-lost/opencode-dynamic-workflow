@@ -1,0 +1,17 @@
+{
+  "name": "opencode-dynamic-workflow",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Dynamic workflow orchestration for OpenCode — JS script-based subagent management with file-system IPC",
+  "exports": {
+    ".": "./lib/runner.mjs",
+    "./ipc": "./lib/ipc.mjs",
+    "./dashboard": "./lib/dashboard.mjs"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "latest"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
