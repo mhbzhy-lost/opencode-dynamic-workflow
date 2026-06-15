@@ -52,6 +52,17 @@ describe("workflow-hint plugin", () => {
     }
   })
 
+  it("提示内容包含 workflow-usage skill 加载引导", async () => {
+    const hook = await loadHook()
+    try {
+      await hook({ tool: "task" }, { args: { prompt: "do work" } })
+      assert.fail("should throw")
+    } catch (err) {
+      assert.ok(err.message.includes("workflow-usage skill"))
+      assert.ok(err.message.includes("API"))
+    }
+  })
+
   it("skip-workflow-hint → 放行", async () => {
     const hook = await loadHook()
     await assert.doesNotReject(() =>

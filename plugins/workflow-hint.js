@@ -38,9 +38,18 @@ const loadDispatchHint = () => {
 /**
  * OpenCode 插件入口。
  * 每次 task 工具调用都注入派发提示（和 dag-dispatch-hint 行为一致）。
+ * 符合 workflow 条件时引导主 agent 加载 workflow-usage skill。
  */
 export const WorkflowHintPlugin = async (_ctx) => {
   const dispatchHint = loadDispatchHint()
+  const skillNotice = [
+    "",
+    "─── workflow-usage skill ───",
+    "如需使用 workflow 编排，先加载 workflow-usage skill 获取完整 API 和用法指南。",
+    "该 skill 包含 createWorkflow API、预定义模板参数、model 指定规则、",
+    "自定义 workflow 编写方法等详细说明。",
+    "",
+  ].join("\n")
   return {
     "tool.execute.before": async (input, output) => {
       if (input.tool !== "task") return
@@ -50,7 +59,7 @@ export const WorkflowHintPlugin = async (_ctx) => {
       // 逃生舱：含 "skip-workflow-hint" 字面值即放行
       if (/skip-workflow-hint/i.test(haystack)) return
 
-      throw new Error(dispatchHint)
+      throw new Error(dispatchHint + skillNotice)
     },
   }
 }
