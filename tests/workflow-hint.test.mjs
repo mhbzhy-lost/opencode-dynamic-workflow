@@ -48,7 +48,7 @@ describe("workflow-hint plugin", () => {
     } catch (err) {
       assert.ok(err.message.includes("git worktree 隔离"))
       assert.ok(err.message.includes("后台模式"))
-      assert.ok(err.message.includes("skip-dag-hint"))
+      assert.ok(err.message.includes("skip-workflow-hint"))
     }
   })
 
