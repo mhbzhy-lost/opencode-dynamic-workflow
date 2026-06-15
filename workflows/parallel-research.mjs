@@ -4,8 +4,8 @@
 //
 // Options:
 //   --resume              从断点恢复
-//   --backend cli|sdk     执行后端（默认 cli）
-//   --cli-path <path>     opencode 二进制路径（默认 opencode）
+//   --model <p/m>         provider/model，如 anthropic/claude-sonnet-4-20250514
+//   --base-url <url>      连接已有 opencode server（省略则自动启动）
 //   --skip-permissions    跳过权限确认（传入 --dangerously-skip-permissions）
 //
 // 阶段 1: 多角度调研（3 个独立 agent）
@@ -15,8 +15,8 @@ import { createWorkflow } from "../lib/runner.mjs"
 // ── 参数解析 ──
 const rawArgs = process.argv.slice(2)
 let resumeMode = false
-let backend = "cli"
-let cliPath = "opencode"
+let model = null
+let baseUrl = null
 let skipPermissions = false
 const positional = []
 
@@ -25,11 +25,11 @@ for (let i = 0; i < rawArgs.length; i++) {
     case "--resume":
       resumeMode = true
       break
-    case "--backend":
-      backend = rawArgs[++i]
+    case "--model":
+      model = rawArgs[++i]
       break
-    case "--cli-path":
-      cliPath = rawArgs[++i]
+    case "--base-url":
+      baseUrl = rawArgs[++i]
       break
     case "--skip-permissions":
       skipPermissions = true
@@ -42,16 +42,16 @@ for (let i = 0; i < rawArgs.length; i++) {
 const question = positional.join(" ")
 
 if (!question) {
-  console.error("Usage: node parallel-research.mjs [--resume] [--backend cli|sdk] <question>")
+  console.error("Usage: node parallel-research.mjs [--resume] [--model <provider/model>] [--base-url <url>] <question>")
   process.exit(1)
 }
 
 // ── Workflow ──
 const wf = await createWorkflow({
   resume: resumeMode,
-  backend,
-  cliPath,
   dangerouslySkipPermissions: skipPermissions,
+  ...(baseUrl ? { baseUrl } : {}),
+  ...(model ? { model } : {}),
 })
 
 console.error(`[workflow] 实时进度面板已就绪，执行以下命令在浏览器中打开：`)

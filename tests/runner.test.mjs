@@ -10,6 +10,7 @@ function createMockClient(options = {}) {
   const sessions = new Map()
   let sessionCounter = 0
   const abortedSessions = []
+  const promptCalls = []         // records all prompt() call bodies
   return {
     global: {
       health: async () => ({ data: { healthy: options.healthy !== false } }),
@@ -21,6 +22,7 @@ function createMockClient(options = {}) {
         return { data: { id } }
       },
       prompt: async ({ path, body }) => {
+        promptCalls.push(body)
         const text = body.parts?.[0]?.text || ""
         if (options.promptDelay)
           await new Promise((r) => setTimeout(r, options.promptDelay))
@@ -46,6 +48,7 @@ function createMockClient(options = {}) {
     // test helpers
     _sessions: sessions,
     _abortedSessions: abortedSessions,
+    _promptCalls: promptCalls,
   }
 }
 
@@ -445,4 +448,123 @@ describe("resume mode", () => {
       wf.shutdown()
     }
   )
+})
+
+describe("model passthrough", () => {
+  it("passes workflow-level model to SDK prompt body", { timeout: 10000 }, async () => {
+    const mockClient = createMockClient({ responseText: "ok" })
+    const mockIpc = createMockIpc()
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+      model: "anthropic/claude-sonnet-4-20250514",
+    })
+
+    await wf.agent("general", "Hello")
+
+    assert.equal(mockClient._promptCalls.length, 1)
+    const body = mockClient._promptCalls[0]
+    assert.deepEqual(body.model, {
+      providerID: "anthropic",
+      modelID: "claude-sonnet-4-20250514",
+    })
+
+    wf.shutdown()
+  })
+
+  it("passes object model to SDK prompt body", { timeout: 10000 }, async () => {
+    const mockClient = createMockClient({ responseText: "ok" })
+    const mockIpc = createMockIpc()
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+      model: { providerID: "openai", modelID: "gpt-4o" },
+    })
+
+    await wf.agent("general", "Hello")
+
+    const body = mockClient._promptCalls[0]
+    assert.deepEqual(body.model, {
+      providerID: "openai",
+      modelID: "gpt-4o",
+    })
+
+    wf.shutdown()
+  })
+
+  it("per-agent model overrides workflow model", { timeout: 10000 }, async () => {
+    const mockClient = createMockClient({ responseText: "ok" })
+    const mockIpc = createMockIpc()
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+      model: "anthropic/claude-sonnet-4-20250514",
+    })
+
+    await wf.agent("general", "Hello", { model: "openai/gpt-4o" })
+
+    const body = mockClient._promptCalls[0]
+    assert.deepEqual(body.model, {
+      providerID: "openai",
+      modelID: "gpt-4o",
+    })
+
+    wf.shutdown()
+  })
+
+  it("omits model from body when no model configured", { timeout: 10000 }, async () => {
+    const mockClient = createMockClient({ responseText: "ok" })
+    const mockIpc = createMockIpc()
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+      // no model
+    })
+
+    await wf.agent("general", "Hello")
+
+    const body = mockClient._promptCalls[0]
+    assert.equal(body.model, undefined, "model should be absent when not configured")
+
+    wf.shutdown()
+  })
+
+  it("passes model in parallel agents", { timeout: 10000 }, async () => {
+    const mockClient = createMockClient({ responseText: "ok" })
+    const mockIpc = createMockIpc()
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+      model: "anthropic/claude-sonnet-4-20250514",
+    })
+
+    await wf.parallel([
+      { type: "general", prompt: "A" },
+      { type: "general", prompt: "B", model: "openai/gpt-4o" },
+    ])
+
+    assert.equal(mockClient._promptCalls.length, 2)
+    // First agent: inherits workflow model
+    assert.deepEqual(mockClient._promptCalls[0].model, {
+      providerID: "anthropic",
+      modelID: "claude-sonnet-4-20250514",
+    })
+    // Second agent: per-agent override
+    assert.deepEqual(mockClient._promptCalls[1].model, {
+      providerID: "openai",
+      modelID: "gpt-4o",
+    })
+
+    wf.shutdown()
+  })
 })
