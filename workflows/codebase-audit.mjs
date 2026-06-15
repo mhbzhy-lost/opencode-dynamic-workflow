@@ -6,6 +6,7 @@
 //   --resume              从断点恢复
 //   --model <p/m>         provider/model，如 anthropic/claude-sonnet-4-20250514
 //   --base-url <url>      连接已有 opencode server（省略则自动启动）
+//   --no-dashboard        不自动打开 dashboard
 //   --skip-permissions    跳过权限确认
 //
 // 阶段 1: 并发探索（3 个只读 agent）
@@ -17,6 +18,7 @@ const rawArgs = process.argv.slice(2)
 let resumeMode = false
 let model = null
 let baseUrl = null
+let openDashboard = true
 let skipPermissions = false
 const positional = []
 
@@ -31,6 +33,9 @@ for (let i = 0; i < rawArgs.length; i++) {
     case "--base-url":
       baseUrl = rawArgs[++i]
       break
+    case "--no-dashboard":
+      openDashboard = false
+      break
     case "--skip-permissions":
       skipPermissions = true
       break
@@ -44,13 +49,11 @@ const target = positional[0] || "src/"
 // ── Workflow ──
 const wf = await createWorkflow({
   resume: resumeMode,
+  openDashboard,
   dangerouslySkipPermissions: skipPermissions,
   ...(baseUrl ? { baseUrl } : {}),
   ...(model ? { model } : {}),
 })
-
-console.error(`[workflow] 实时进度面板已就绪，执行以下命令在浏览器中打开：`)
-console.error(`  open ${wf.dashboardPath}`)
 
 if (wf.snapshot) {
   console.error(`[workflow] 从断点恢复: ${Object.keys(wf.snapshot.completedAgents || {}).length} 个 agent 已完成`)

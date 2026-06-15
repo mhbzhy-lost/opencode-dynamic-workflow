@@ -32,6 +32,7 @@ node vendor/opencode-dynamic-workflow/workflows/parallel-research.mjs \
   [--model <provider/model>] \
   [--base-url <url>] \
   [--resume] \
+  [--no-dashboard] \
   [--skip-permissions] \
   "<问题文本>"
 ```
@@ -41,6 +42,7 @@ node vendor/opencode-dynamic-workflow/workflows/parallel-research.mjs \
 - `--model`：指定 LLM，格式 `provider/model`，如 `anthropic-idealab/claude-sonnet-4-20250514`
 - `--base-url`：连接已有的 opencode server（省略则自动启动临时 server）
 - `--resume`：从 `.workflow/snapshot.json` 断点恢复
+- `--no-dashboard`：不自动在浏览器中打开 dashboard（用户要求静默时使用）
 - `--skip-permissions`：跳过权限确认
 
 **正确示例：**
@@ -72,6 +74,7 @@ node vendor/opencode-dynamic-workflow/workflows/codebase-audit.mjs \
   [--model <provider/model>] \
   [--base-url <url>] \
   [--resume] \
+  [--no-dashboard] \
   [--skip-permissions] \
   [target-dir]
 ```
@@ -121,6 +124,7 @@ const wf = await createWorkflow({
   workdir: string,          // IPC 目录，默认 ".workflow"
   maxConcurrent: number,    // 最大并行 agent 数，默认 10
   resume: boolean,          // 从快照恢复
+  openDashboard: boolean,   // 自动打开 dashboard（默认 true，--no-dashboard 设为 false）
   dangerouslySkipPermissions: boolean,
 })
 ```
