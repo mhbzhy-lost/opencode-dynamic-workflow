@@ -1,6 +1,6 @@
 ---
 name: workflow-usage
-description: Use when dispatching >=3 subagents, or when subagents have DAG dependencies, or when real-time intervention (pause/resume/snapshot) is needed. Provides the complete API reference and usage guide for opencode-dynamic-workflow.
+description: Use when dispatching >=3 subagents, or when subagents have DAG dependencies, or when real-time intervention (pause/resume/snapshot) is needed. Provides the complete API reference and usage guide for opencode-dynamic-workflow. Key rules -- single subagent or <=2 independent subagents can dispatch directly (background mode required); >=3 or DAG deps must use workflow script; independent tasks must be dispatched in parallel; coding tasks require git worktree isolation. Load this skill BEFORE writing any workflow invocation or createWorkflow call.
 ---
 
 # Workflow 编排使用指南
