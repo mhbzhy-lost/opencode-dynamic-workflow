@@ -177,6 +177,7 @@ describe("wf.agent()", () => {
     const agentStatus = mockIpc._statuses["ipc-output-test"]
     assert.equal(agentStatus.status, "completed")
     assert.equal(agentStatus.output, "hello world", "IPC status should contain output")
+    assert.ok(agentStatus.finishedAt, "completed agent should have finishedAt")
 
     wf.shutdown()
   })
