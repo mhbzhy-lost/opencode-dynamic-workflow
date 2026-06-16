@@ -772,6 +772,56 @@ describe("model passthrough", () => {
 })
 
 // ---------------------------------------------------------------------------
+// dashboard timer error handling
+// ---------------------------------------------------------------------------
+
+describe("dashboard refresh error handling", () => {
+  it("logs first render error, stays silent on subsequent", { timeout: 10000 }, async () => {
+    const mockClient = createMockClient({ responseText: "ok" })
+
+    let renderCallCount = 0
+    const mockIpc = createMockIpc()
+    mockIpc.readStatus = () => ({ state: "running", agents: mockIpc._statuses })
+
+    const origStderr = process.stderr.write.bind(process.stderr)
+    const stderrChunks = []
+    process.stderr.write = (chunk, ...rest) => {
+      stderrChunks.push(typeof chunk === "string" ? chunk : chunk.toString())
+      return true
+    }
+
+    try {
+      const { createWorkflow } = await import("../lib/runner.mjs")
+
+      const origImport = await import("../lib/dashboard.mjs")
+      const origRender = origImport.renderDashboard
+      let patchedModule = false
+
+      const wf = await createWorkflow({
+        _mockClient: mockClient,
+        _mockIpc: mockIpc,
+        _dashboardRender: () => {
+          renderCallCount++
+          throw new Error("render boom")
+        },
+      })
+
+      await new Promise((r) => setTimeout(r, 2500))
+
+      wf.shutdown()
+
+      const stderrOutput = stderrChunks.join("")
+      const matches = stderrOutput.match(/dashboard refresh failed/g) || []
+      assert.ok(renderCallCount >= 2, `render should be called at least twice, got ${renderCallCount}`)
+      assert.equal(matches.length, 1, `only first error logged, found ${matches.length} log lines`)
+      assert.ok(stderrOutput.includes("render boom"), "error message should be included")
+    } finally {
+      process.stderr.write = origStderr
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
 // worktree integration
 // ---------------------------------------------------------------------------
 
