@@ -13,8 +13,7 @@ echo "[install] npm install in $ROOT"
 # 注意：Node ESM 不支持 npm link 的 bare import（仅 CJS 生效），所以不做
 # 全局 link。自定义 workflow 脚本请用以下 two import 方式：
 #   1) 脚本放在 $ROOT/workflows/ 下：import ... from "../lib/runner.mjs"
-#   2) 脚本放在任意位置：
-#      const { ... } = await import(\`\${process.env.CLAUDE_CONFIG_HOME}/vendor/opencode-dynamic-workflow/lib/runner.mjs\`)
+#   2) 脚本放在任意位置：用 OPENCODE_WORKFLOW_ROOT 环境变量（由本脚本注册到 shell）
 # 详见 skills/workflow-usage/SKILL.md 的『编写自定义 workflow 脚本』章节。
 
 # 2. 软链插件
@@ -75,6 +74,26 @@ else
   fi
 fi
 
-# 4. 输出信息
+# 4. 注册 OPENCODE_WORKFLOW_ROOT 到 shell（供自定义 workflow 脚本引用 lib）
+# 仅子仓根目录自身有意义；主仓调用时 OPENCODE_WORKFLOW_ROOT 同样指向本子仓。
+ZSHRC="${ZSHRC:-$HOME/.zshrc}"
+EXPORT_LINE="export OPENCODE_WORKFLOW_ROOT=\"$ROOT\""
+if [ ! -f "$ZSHRC" ]; then
+  echo "[skip] $ZSHRC not found, please export OPENCODE_WORKFLOW_ROOT manually"
+elif grep -Fq "OPENCODE_WORKFLOW_ROOT=" "$ZSHRC"; then
+  existing=$(grep "OPENCODE_WORKFLOW_ROOT=" "$ZSHRC" | head -1)
+  if echo "$existing" | grep -Fq "\"$ROOT\""; then
+    echo "[ok] OPENCODE_WORKFLOW_ROOT already set to $ROOT"
+  else
+    echo "[warn] OPENCODE_WORKFLOW_ROOT exists but points elsewhere; please verify"
+    echo "       current: $existing"
+    echo "       expected: $EXPORT_LINE"
+  fi
+else
+  printf '\n# OPENCODE_WORKFLOW_ROOT (auto-registered by install-opencode.sh)\n%s\n' "$EXPORT_LINE" >> "$ZSHRC"
+  echo "[linked] OPENCODE_WORKFLOW_ROOT=$ROOT registered in $ZSHRC"
+fi
+
+# 5. 输出信息
 echo "[ok] workflow 模板目录: $ROOT/workflows/"
-echo "[next] 重启 OpenCode 以加载 workflow-hint 插件和 workflow-usage skill"
+echo "[next] 重启 opencode 以加载 workflow-hint 插件和 workflow-usage skill"
