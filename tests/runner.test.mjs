@@ -442,6 +442,63 @@ describe("wf.dag()", () => {
 
     wf.shutdown()
   })
+
+  it("interpolates prompts safely when dep ids contain regex metacharacters", { timeout: 10000 }, async () => {
+    const prompts = []
+    const mockClient = {
+      global: { health: async () => ({ data: { healthy: true } }) },
+      session: {
+        list: async () => ({ data: [] }),
+        create: async (opts) => ({ data: { id: `s-${Math.random()}` } }),
+        prompt: async (opts) => {
+          const text = opts.body.parts[0].text
+          prompts.push(text)
+          return { data: { parts: [{ type: "text", text: `out-for-${text}` }] } }
+        },
+      },
+    }
+    const mockIpc = createMockIpc()
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+    })
+
+    // Dep id with `.` regex metachar — must be treated as literal dot.
+    // With `new RegExp`, `.` matches any single char. The decoy
+    // `{{feat branch.output}}` (with a SPACE) would be wrongly matched
+    // by a regex, and the result would replace the space-bearing version.
+    const results = await wf.dag([
+      { id: "feat.branch", type: "coder", prompt: "do feat.branch work", deps: [] },
+      {
+        id: "downstream",
+        type: "coder",
+        // The decoy `{{feat branch.output}}` MUST remain untouched;
+        // only `{{feat.branch.output}}` (literal dot) should be interpolated.
+        prompt: "decoy {{feat branch.output}} vs real {{feat.branch.output}}",
+        deps: ["feat.branch"],
+      },
+    ])
+
+    assert.equal(results["feat.branch"].status, "completed")
+    assert.equal(results.downstream.status, "completed")
+    const downstreamPrompt = prompts[prompts.length - 1]
+    assert.ok(
+      downstreamPrompt.includes("decoy {{feat branch.output}}"),
+      `decoy must remain untouched (literal matching preserves it); got: ${downstreamPrompt}`
+    )
+    assert.ok(
+      downstreamPrompt.includes("out-for-do feat.branch work"),
+      "placeholder must be substituted with upstream output"
+    )
+    assert.ok(
+      !downstreamPrompt.includes("{{feat.branch.output}}"),
+      "no unresolved placeholder remaining"
+    )
+
+    wf.shutdown()
+  })
 })
 
 describe("wf.status()", () => {

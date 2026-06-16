@@ -209,13 +209,14 @@ describe("readCommand", () => {
     assert.deepEqual(result, data);
   });
 
-  it("throws clear error on malformed JSON", () => {
-    writeFileSync(join(commandsDir, "agent_prompt_broken.json"), "{ invalid json ");
+  it("returns null on malformed JSON so the poll loop retries (tolerant reader)", () => {
+    // Partial writes (race between writer and reader) are tolerated rather
+    // than causing a fatal error in the poll loop. Reader returns null and
+    // the caller will retry on the next poll tick.
+    writeFileSync(join(commandsDir, "agent_prompt_partial.json"), "{ invalid json ");
 
-    assert.throws(
-      () => readCommand(commandsDir, "agent_prompt", "broken"),
-      /malformed JSON/i
-    );
+    const result = readCommand(commandsDir, "agent_prompt", "partial");
+    assert.equal(result, null);
   });
 });
 

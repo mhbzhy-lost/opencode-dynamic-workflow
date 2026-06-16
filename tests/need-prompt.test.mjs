@@ -161,19 +161,36 @@ describe("wf.needPrompt()", () => {
     assert.equal(result, "delayed prompt")
   })
 
-  it("throws clear error on malformed JSON in command file", { timeout: 5000 }, async () => {
+  it("tolerates malformed JSON as in-progress write and keeps polling", { timeout: 5000 }, async () => {
+    const filePath = join(tmpDir, "agent_prompt_partial.json")
+    // Write an incomplete JSON to simulate a partial in-flight write.
+    writeFileSync(filePath, "not json {{{")
+
+    // Schedule a valid write slightly after the malformed one — the reader
+    // should skip the partial and succeed when the valid file arrives.
+    setTimeout(() => {
+      writeFileSync(filePath, JSON.stringify({ prompt: "final prompt" }))
+    }, 200)
+
+    const result = await wf.needPrompt("partial", {})
+    assert.equal(result, "final prompt")
+  })
+
+  it("eventually times out when file remains malformed past deadline", { timeout: 5000 }, async () => {
+    // Write malformed JSON that is never fixed. The poller should time out
+    // rather than hang or throw a cryptic JSON error.
     writeFileSync(
-      join(tmpDir, "agent_prompt_bad.json"),
+      join(tmpDir, "agent_prompt_broken.json"),
       "not json {{{"
     )
 
     await assert.rejects(
-      () => wf.needPrompt("bad", {}),
+      () => wf.needPrompt("broken", {}, { pollTimeoutMs: 300 }),
       (err) => {
         assert.ok(err instanceof Error)
         assert.ok(
-          /JSON|parse|malformed|invalid/i.test(err.message),
-          `Expected error mentioning JSON/parse, got: ${err.message}`
+          /timeout|timed out/i.test(err.message),
+          `Expected timeout error, got: ${err.message}`
         )
         return true
       }
