@@ -6,6 +6,13 @@ import { tmpdir } from "node:os";
 
 import { renderDashboard } from "../lib/dashboard.mjs";
 
+let esc, truncate;
+try {
+  ({ esc, truncate } = await import("../lib/dashboard.mjs"));
+} catch {
+  // exports may not exist yet — tests will fail with meaningful assertion
+}
+
 function makeTempWorkdir() {
   const workdir = mkdtempSync(join(tmpdir(), "dash-test-"));
   return workdir;
@@ -127,5 +134,30 @@ describe("renderDashboard", () => {
     assert.ok(html.includes("5"));    // totalPhases
     // Workflow state color for "running" = #22c55e
     assert.ok(html.includes("#22c55e"));
+  });
+});
+
+describe("esc", () => {
+  it("escapes single quotes as &#x27;", () => {
+    assert.equal(esc("it's \"fine\""), "it&#x27;s &quot;fine&quot;");
+  });
+
+  it("escapes backticks", () => {
+    assert.equal(esc("abc`def"), "abc&#96;def");
+  });
+
+  it("escapes all HTML special chars together", () => {
+    assert.equal(esc("<a href='x'>"), "&lt;a href=&#x27;x&#x27;&gt;");
+  });
+});
+
+describe("truncate", () => {
+  it("does not split surrogate pairs", () => {
+    // 😀 is U+1F600 = \uD83D\uDE00 (surrogate pair, 2 code units)
+    const result = truncate("a😀b", 2);
+    // slice(0,2) would be "a\uD83D" (broken high surrogate)
+    // should either drop the half-surrogate or keep the full pair
+    const hasBrokenSurrogate = /\uD83D(?![\uDC00-\uDFFF])/.test(result);
+    assert.equal(hasBrokenSurrogate, false, "should not end with lone high surrogate");
   });
 });
