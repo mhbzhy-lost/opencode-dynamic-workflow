@@ -45,6 +45,73 @@ describe("worktree.create", () => {
 })
 
 // ---------------------------------------------------------------------------
+// worktree branch name validation
+// ---------------------------------------------------------------------------
+describe("worktree branch validation", () => {
+  it("accepts valid branch names like wf-001", async () => {
+    const exec = () => Promise.resolve("")
+    const { create } = await import("../lib/worktree.mjs")
+    const state = await create({ repoDir: "/repo", branch: "wf-001", baseBranch: "main", exec })
+    assert.equal(state.branch, "wf-001")
+  })
+
+  it("accepts valid branch names like feature/a.b", async () => {
+    const exec = () => Promise.resolve("")
+    const { create } = await import("../lib/worktree.mjs")
+    const state = await create({ repoDir: "/repo", branch: "feature/a.b", baseBranch: "main", exec })
+    assert.equal(state.branch, "feature/a.b")
+  })
+
+  it("rejects branch starting with --", async () => {
+    const exec = () => Promise.resolve("")
+    const { create } = await import("../lib/worktree.mjs")
+    await assert.rejects(
+      () => create({ repoDir: "/repo", branch: "--foo", baseBranch: "main", exec }),
+      /invalid branch name/
+    )
+  })
+
+  it("rejects branch with spaces", async () => {
+    const exec = () => Promise.resolve("")
+    const { create } = await import("../lib/worktree.mjs")
+    await assert.rejects(
+      () => create({ repoDir: "/repo", branch: "foo bar", baseBranch: "main", exec }),
+      /invalid branch name/
+    )
+  })
+
+  it("rejects branch with path traversal", async () => {
+    const exec = () => Promise.resolve("")
+    const { create } = await import("../lib/worktree.mjs")
+    await assert.rejects(
+      () => create({ repoDir: "/repo", branch: "../etc/passwd", baseBranch: "main", exec }),
+      /invalid branch name/
+    )
+  })
+
+  it("rejects empty branch name", async () => {
+    const exec = () => Promise.resolve("")
+    const { create } = await import("../lib/worktree.mjs")
+    await assert.rejects(
+      () => create({ repoDir: "/repo", branch: "", baseBranch: "main", exec }),
+      /invalid branch name/
+    )
+  })
+
+  it("rejects invalid baseBranch in chooseAccumulator", async () => {
+    const exec = (cmd, args) => {
+      if (args.includes("list")) return Promise.resolve("worktree /repo\nbranch refs/heads/main\n\n")
+      return Promise.resolve("")
+    }
+    const { chooseAccumulator } = await import("../lib/worktree.mjs")
+    await assert.rejects(
+      () => chooseAccumulator("/repo/.workflow", "--bad", "/repo", { exec }),
+      /invalid branch name/
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
 // worktree.remove
 // ---------------------------------------------------------------------------
 describe("worktree.remove", () => {
