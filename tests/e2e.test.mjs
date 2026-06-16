@@ -330,11 +330,17 @@ describe("e2e: workflow script", () => {
       )
 
       // ── stdout 是合法 JSON 结果 ──
+      // stdout 混合 [workflow:xxx] 事件行和最终 JSON 结果；提取非事件行
+      const jsonLine = stdout
+        .split("\n")
+        .filter(line => !line.startsWith("[workflow:"))
+        .join("\n")
+        .trim()
       let result
       try {
-        result = JSON.parse(stdout)
+        result = JSON.parse(jsonLine)
       } catch {
-        assert.fail(`stdout is not valid JSON: ${stdout.slice(0, 500)}`)
+        assert.fail(`stdout JSON is not valid: ${jsonLine.slice(0, 500)}`)
       }
       assert.equal(result.type, "parallel-research")
       assert.equal(result.layers, 2)

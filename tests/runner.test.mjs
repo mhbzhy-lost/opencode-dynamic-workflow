@@ -500,10 +500,43 @@ describe("wf.dag()", () => {
 
     wf.shutdown()
   })
-})
 
-// ---------------------------------------------------------------------------
-// wf.dag() — per-node worktree isolation (A: accumulator + per-node worktrees)
+  it("emits phase_start and phase_end events for each DAG layer", { timeout: 10000 }, async () => {
+    const writes = []
+    const orig = process.stdout.write
+    process.stdout.write = (chunk) => { writes.push(chunk); return true }
+
+    try {
+      const mockClient = createMockClient({ responseText: "ok" })
+      const mockIpc = createMockIpc()
+      const { createWorkflow } = await import("../lib/runner.mjs")
+
+      const wf = await createWorkflow({
+        _mockClient: mockClient,
+        _mockIpc: mockIpc,
+      })
+
+      await wf.dag([
+        { id: "a", type: "coder", prompt: "A", deps: [] },
+        { id: "b", type: "coder", prompt: "B", deps: ["a"] },
+      ])
+
+      wf.shutdown()
+
+      const str = writes.map(w => String(w)).join("")
+      assert.ok(str.includes("[workflow:phase_start]"), "phase_start emitted")
+      assert.ok(str.includes("[workflow:phase_end]"), "phase_end emitted")
+
+      // 2 layers = 2 starts, 2 ends
+      const starts = str.match(/\[workflow:phase_start\]/g) || []
+      const ends = str.match(/\[workflow:phase_end\]/g) || []
+      assert.equal(starts.length, 2, `expected 2 phase_start, got ${starts.length}`)
+      assert.equal(ends.length, 2, `expected 2 phase_end, got ${ends.length}`)
+    } finally {
+      process.stdout.write = orig
+    }
+  })
+})
 // ---------------------------------------------------------------------------
 describe("wf.dag() with per-node worktrees", () => {
   it("creates a worktree per DAG node and routes each agent via query.directory", { timeout: 15000 }, async () => {
@@ -568,16 +601,127 @@ describe("wf.dag() with per-node worktrees", () => {
     assert.equal(bCall.query?.directory, "/repo/.workflow/wt-B", "agent B routed to worktree B")
     assert.equal(cCall.query?.directory, "/repo/.workflow/wt-C", "agent C routed to worktree C")
 
-    // Verify worktree lifecycle: create → consolidate → remove for each layer
+    // Verify worktree lifecycle ordering: create → run → consolidate → remove per layer
     const creates = worktreeEvents.filter(e => e.op === "createNode")
     const consolidates = worktreeEvents.filter(e => e.op === "consolidate")
     const removes = worktreeEvents.filter(e => e.op === "removeNode")
 
-    assert.ok(creates.length >= 1, "should create node worktrees")
-    assert.ok(consolidates.length >= 1, "should consolidate after each layer")
-    assert.ok(removes.length >= 1, "should remove node worktrees after consolidation")
+    assert.equal(creates.length, 3, "3 node worktrees created (A, B, C)")
+    assert.equal(consolidates.length, 2, "2 consolidations (one per layer)")
+    assert.equal(removes.length, 3, "3 worktrees removed")
+
+    // Layer 1 nodes (A, B) must be removed BEFORE layer 2 node (C) is created
+    const aRemoveIdx = worktreeEvents.findIndex(e => e.op === "removeNode" && e.nodeDir.endsWith("wt-A"))
+    const bRemoveIdx = worktreeEvents.findIndex(e => e.op === "removeNode" && e.nodeDir.endsWith("wt-B"))
+    const cCreateIdx = worktreeEvents.findIndex(e => e.op === "createNode" && e.nodeId === "C")
+    assert.ok(aRemoveIdx < cCreateIdx, `A removed (${aRemoveIdx}) before C created (${cCreateIdx})`)
+    assert.ok(bRemoveIdx < cCreateIdx, `B removed (${bRemoveIdx}) before C created (${cCreateIdx})`)
 
     wf.shutdown()
+  })
+
+  it("dag node with needsPrompt:true polls command file for injected prompt", { timeout: 15000 }, async () => {
+    const promptCalls = []
+    const mockClient = {
+      global: { health: async () => ({ data: { healthy: true } }) },
+      session: {
+        list: async () => ({ data: [] }),
+        create: async () => ({ data: { id: `s-${Math.random()}` } }),
+        prompt: async (opts) => {
+          promptCalls.push({ query: opts.query, body: opts.body })
+          return { data: { parts: [{ type: "text", text: "ok" }] } }
+        },
+      },
+    }
+    const mockIpc = createMockIpc()
+
+    const fs = await import("node:fs")
+    const path = await import("node:path")
+    const testWorkdir = `.workflow-needprompt-${Date.now()}`
+    const cmdsDir = path.join(testWorkdir, "commands")
+    fs.mkdirSync(cmdsDir, { recursive: true })
+
+    // Pre-populate command file for node B BEFORE dag runs
+    fs.writeFileSync(
+      path.join(cmdsDir, "agent_prompt_B.json"),
+      JSON.stringify({ prompt: "injected prompt for B" })
+    )
+
+    try {
+      const { createWorkflow } = await import("../lib/runner.mjs")
+
+      const wf = await createWorkflow({
+        _mockClient: mockClient,
+        _mockIpc: mockIpc,
+        workdir: testWorkdir,
+      })
+
+      const results = await wf.dag([
+        { id: "A", type: "coder", prompt: "direct prompt A", deps: [] },
+        { id: "B", type: "coder", needsPrompt: true, deps: ["A"] },
+      ])
+
+      wf.shutdown()
+
+      // Node A should use direct prompt
+      const aCall = promptCalls.find((p) => p.body.parts[0].text === "direct prompt A")
+      assert.ok(aCall, "node A uses direct prompt")
+
+      // Node B should use injected prompt from command file
+      const bCall = promptCalls.find((p) => p.body.parts[0].text === "injected prompt for B")
+      assert.ok(bCall, "node B uses injected prompt from command file")
+
+      // Both agents completed
+      assert.equal(results.A.status, "completed")
+      assert.equal(results.B.status, "completed")
+    } finally {
+      fs.rmSync(testWorkdir, { recursive: true, force: true })
+    }
+  })
+
+  it("shutdown with worktree.autoMerge merges accumulator into baseBranch", { timeout: 10000 }, async () => {
+    const worktreeEvents = []
+    const mockWorktreeApi = {
+      createNode: async (repoDir, nodeId, baseBranch) => {
+        worktreeEvents.push({ op: "createNode", nodeId })
+        return { path: `/repo/.workflow/wt-${nodeId}`, branch: `wf-${nodeId}`, repoDir }
+      },
+      consolidate: async (nodeDirs, accumulatorDir) => {
+        worktreeEvents.push({ op: "consolidate" })
+        return { merged: [], conflicts: [] }
+      },
+      removeNode: async (nodeDir) => {
+        worktreeEvents.push({ op: "removeNode", nodeDir })
+      },
+      ensureAccumulator: async (repoDir, baseBranch) => {
+        worktreeEvents.push({ op: "ensureAccumulator" })
+        return "/repo/.workflow/accumulator"
+      },
+      mergeAccumulator: async (accumulatorDir, baseBranch) => {
+        worktreeEvents.push({ op: "mergeAccumulator", accumulatorDir, baseBranch })
+      },
+    }
+    const mockClient = createMockClient({ responseText: "ok" })
+    const mockIpc = createMockIpc()
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+      worktree: { enable: true, autoMerge: true, repoDir: "/repo", baseBranch: "main" },
+      _worktreeApi: mockWorktreeApi,
+    })
+
+    await wf.dag([
+      { id: "X", type: "coder", prompt: "do X", deps: [] },
+    ])
+
+    wf.shutdown()
+
+    const merge = worktreeEvents.find(e => e.op === "mergeAccumulator")
+    assert.ok(merge, "mergeAccumulator called on shutdown")
+    assert.equal(merge.accumulatorDir, "/repo/.workflow/accumulator")
+    assert.equal(merge.baseBranch, "main")
   })
 })
 

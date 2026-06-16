@@ -79,4 +79,21 @@ describe("merge-gate.createWorktreeApi", () => {
     assert.ok(removeCall)
     assert.ok(removeCall[1].includes("/repo/.workflow/node-A"))
   })
+
+  it("mergeAccumulator merges acc branch into baseBranch", async () => {
+    const calls = []
+    const exec = (cmd, args) => {
+      calls.push([cmd, args.join ? args.join(" ") : args])
+      return Promise.resolve("")
+    }
+    const { createWorktreeApi } = await import("../lib/merge-gate.mjs")
+    const api = createWorktreeApi({ repoDir: "/repo", baseBranch: "main", exec })
+
+    await api.mergeAccumulator("/repo/.workflow/accumulator", "main")
+
+    const merged = calls.find(([, a]) => a.includes("merge") && a.includes("main-acc"))
+    assert.ok(merged, "should merge main-acc into main")
+    const checkout = calls.find(([, a]) => a.includes("checkout") && a.includes("main"))
+    assert.ok(checkout, "should checkout main before merge")
+  })
 })
