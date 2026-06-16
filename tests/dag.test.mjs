@@ -74,6 +74,19 @@ describe("topoSort", () => {
       /cycle/i,
     )
   })
+
+  it("correctly sorts a 200-node linear chain", () => {
+    const nodes = []
+    for (let i = 0; i < 200; i++) {
+      nodes.push({ id: `n${i}`, deps: i === 0 ? [] : [`n${i - 1}`] })
+    }
+    const dag = createDAG(nodes)
+    const sorted = topoSort(dag)
+    assert.equal(sorted.length, 200)
+    for (let i = 0; i < 200; i++) {
+      assert.equal(sorted[i], `n${i}`)
+    }
+  })
 })
 
 // ---------------------------------------------------------------------------
