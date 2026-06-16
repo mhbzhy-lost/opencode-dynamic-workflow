@@ -121,7 +121,7 @@ describe("wf.needPrompt()", () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it("emits [workflow:need_prompt] JSON line to stdout", { timeout: 5000 }, async () => {
+  it("emits [workflow:need_agent] JSON line to stdout", { timeout: 5000 }, async () => {
     // Write the file immediately so needPrompt doesn't block
     writeFileSync(
       join(tmpDir, "agent_prompt_emit-test.json"),
@@ -135,10 +135,10 @@ describe("wf.needPrompt()", () => {
       cap.restore()
     }
 
-    const emitted = cap.lines.find((l) => l.includes("[workflow:need_prompt]"))
-    assert.ok(emitted, `Expected [workflow:need_prompt] line in stdout, got: ${JSON.stringify(cap.lines)}`)
+    const emitted = cap.lines.find((l) => l.includes("[workflow:need_agent]"))
+    assert.ok(emitted, `Expected [workflow:need_agent] line in stdout, got: ${JSON.stringify(cap.lines)}`)
 
-    const json = JSON.parse(emitted.replace("[workflow:need_prompt] ", "").trim())
+    const json = JSON.parse(emitted.replace("[workflow:need_agent] ", "").trim())
     assert.equal(json.id, "emit-test")
     assert.deepEqual(json.spec, { type: "coder" })
   })
