@@ -119,8 +119,9 @@ const wf = await createWorkflow({
   worktree: {               // git worktree 隔离（可选，仅 coding 类 workflow 启用）
     enable: boolean,
     repoDir: string,        // git 仓库路径
-    branch: string,         // worktree 分支名
-    baseBranch: string,     // 基准分支，默认当前 HEAD
+    baseBranch: string,     // 基准分支，默认 "main"
+    branch: string?,        // 指定时走 legacy single-worktree；省略时用 per-node worktrees
+    autoMerge: boolean?,    // 为 true 时 shutdown 自动 merge accumulator 到 baseBranch
     exec: function?,        // 注入的 exec 函数（测试用）
   },
   dangerouslySkipPermissions: boolean,
@@ -128,14 +129,13 @@ const wf = await createWorkflow({
 ```
 
 **worktree 行为说明：**
-- `enable: true` 时脚本自动执行 `git worktree add -b <branch>`，
-  并将 `opencode serve` 启动在该 worktree 目录下
-- **架构设计：多 workstream + accumulator**（每层一个 worktree，accumulator 统一归并）。`worktree.mjs` 提供 `chooseAccumulator`、`consolidatePhase`、`removeAccumulator` 三个 API 支持此模式
-- **runner.mjs 当前实现：单 worktree**，所有 agent 共用 1 个 worktree。同层无依赖的 agent 会并发跑，**如果改同一文件必冲突**
-- shutdown 后保留 worktree 与分支（**不自动 merge、不自动删除**），原因：
-  merge 冲突需要 LLM 判断（不能机械合），删除需主 agent 确认用户已审完代码
-- `wf.worktree` 属性保存创建后的 worktree 状态（path/branch/repoDir）
-- `shutdown()` 写入 IPC result 时包含 `worktree` 字段，供 CLI 脚本告知主 agent 如何合并
+- `enable: true` 且未指定 `branch` 时，自动使用 **per-node worktrees + accumulator**：
+  - 每个 DAG 节点创建独立 worktree（`merge-gate.createNode`）
+  - 每层完成后 consolidate 到 accumulator，移除节点 worktree
+  - DAG 结束后 accumulator 包含所有层的累积结果
+- `enable: true` 且指定 `branch` 时，走 **legacy single-worktree**（所有 agent 共享 1 个 worktree）
+- `autoMerge: true` 时 shutdown 自动将 accumulator merge 到 baseBranch（冲突时抛异常）
+- 默认 `autoMerge: false`，shutdown 后保留 worktree 与 accumulator 分支，主 agent 手动 merge
 
 **coding workflow 并发策略：**
 - agent 改不同文件 → DAG 同层无 deps，自动并行
@@ -191,8 +191,8 @@ const p3 = await wf.parallel([...])   // Phase 3: 基于 p2 再并行
 
 #### DAG 编排（推荐用于复杂依赖）
 
+**直接 prompt：**
 ```javascript
-// 声明式 DAG：自动拓扑分层，层内并发执行
 const results = await wf.dag([
   { id: "research",   type: "explore", prompt: "调研 X",          deps: [] },
   { id: "design",     type: "general", prompt: "设计方案",         deps: ["research"] },
@@ -201,6 +201,18 @@ const results = await wf.dag([
   { id: "integrate",  type: "coder",   prompt: "集成：{{impl-A.output}} + {{impl-B.output}}", deps: ["impl-A", "impl-B"] },
 ])
 // results["integrate"].output — 最终输出
+```
+
+**needsPrompt（R3 合规，prompt 由主 agent 构造）：**
+```javascript
+const results = await wf.dag([
+  { id: "explore", type: "explore", prompt: "调研 X",      deps: [] },
+  { id: "implement", type: "coder", needsPrompt: true,     deps: ["explore"] },
+  //                                       ^^^^^^^^^^^^^^^^
+  // emit [workflow:need_agent] {"id":"implement","spec":{...}}
+  // 阻塞等待主 agent 写 {commandsDir}/agent_prompt_implement.json
+  // 主 agent 可基于 explore.output 构造精确的 implement prompt
+])
 ```
 
 **插值占位符：**
@@ -214,8 +226,11 @@ const results = await wf.dag([
 |---|---|---|
 | `id` | string | 唯一节点 ID |
 | `type` | string? | agent 类型（默认 `"general"`） |
-| `prompt` | string | 任务 prompt，支持 `{{dep.output}}` 插值 |
+| `prompt` | string | 任务 prompt，支持 `{{dep.output}}` 插值。与 `needsPrompt` 互斥 |
+| `needsPrompt` | boolean? | 为 `true` 时省略 prompt，emit `need_agent` 事件等主 agent 注入 |
 | `deps` | string[] | 依赖的节点 ID 列表 |
+
+每层 DAG 执行前后自动 emit `[workflow:phase_start]` / `[workflow:phase_end]` 事件（stdout JSON line），payload 含 `{ phase, total, nodes, results }`。
 
 #### 双向通信（R3：prompt 由主 agent 控制）
 
@@ -281,8 +296,7 @@ node $OPENCODE_WORKFLOW_ROOT/workflows/parallel-research.mjs \
 - [ ] 指定 `--model`（provider 名必须与 opencode 配置中的 provider ID 一致）
 - [ ] 问题文本用引号包裹，避免 shell 拆分
 - [ ] coding workflow 改同文件：用 deps 串行；改不同文件：同层无 deps 自动并行
-- [ ] coding workflow 启用 `worktree.enable: true`（脚本自动创建 worktree 隔离工作区）
-- [ ] 需要真并行工作目录隔离时，参考 `worktree.mjs` 的 accumulator API（`chooseAccumulator` / `consolidatePhase` / `removeAccumulator`）
-- [ ] workflow 完成后主 agent 执行 `git merge` + `git worktree remove` + `git branch -d`
-- [ ] 复杂依赖用 `wf.dag()` 声明式编排（自动拓扑分层 + 插值）
-- [ ] 需要主 agent 控制 prompt 时用 `wf.needPrompt()` 双向通信
+- [ ] coding workflow 启用 `worktree.enable: true`（默认 per-node worktrees + accumulator）
+- [ ] 设 `worktree.autoMerge: true` 让 shutdown 自动 merge accumulator 到 baseBranch
+- [ ] 复杂依赖用 `wf.dag()` 声明式编排（自动拓扑分层 + 插值 + phase 事件）
+- [ ] 需要主 agent 运行时构造 prompt 时，DAG 节点设 `needsPrompt: true`（R3 合规）
