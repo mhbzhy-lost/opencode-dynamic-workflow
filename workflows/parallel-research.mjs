@@ -9,8 +9,9 @@
 //   --no-dashboard        不自动打开 dashboard
 //   --skip-permissions    跳过权限确认（传入 --dangerously-skip-permissions）
 //
-// 阶段 1: 多角度调研（3 个独立 agent）
-// 阶段 2: 交叉验证
+// DAG:
+//   research-tech/practices/risks  (层 1: 并发)
+//   research-synthesis             (层 2: 依赖层 1)
 import { createWorkflow } from "../lib/runner.mjs"
 
 // ── 参数解析 ──
@@ -64,27 +65,28 @@ if (wf.snapshot) {
   console.error(`[workflow] 从断点恢复: ${Object.keys(wf.snapshot.completedAgents || {}).length} 个 agent 已完成`)
 }
 
-// 阶段 1：多角度调研
-const researches = await wf.parallel([
-  { type: "general", prompt: `从技术实现角度调研：${question}`, id: "research-tech" },
-  { type: "general", prompt: `从最佳实践和社区经验角度调研：${question}`, id: "research-practices" },
-  { type: "general", prompt: `从风险和局限性角度调研：${question}`, id: "research-risks" },
+// ── DAG 编排（2 层）──
+const results = await wf.dag([
+  { id: "research-tech",      type: "general", prompt: `从技术实现角度调研：${question}`, deps: [] },
+  { id: "research-practices", type: "general", prompt: `从最佳实践和社区经验角度调研：${question}`, deps: [] },
+  { id: "research-risks",     type: "general", prompt: `从风险和局限性角度调研：${question}`, deps: [] },
+  { id: "research-synthesis", type: "general", prompt:
+    `以下是三个独立调研团队对同一问题的回答。请交叉验证，` +
+    `标出三方一致的结论、存在分歧的点、以及可能的盲点。\n\n` +
+    `问题：${question}\n\n` +
+    `### 调研 1\n{{research-tech.output}}\n\n### 调研 2\n{{research-practices.output}}\n\n### 调研 3\n{{research-risks.output}}`,
+    deps: ["research-tech", "research-practices", "research-risks"] },
 ])
 
-// 阶段 2：交叉验证
-const verification = await wf.agent("general",
-  `以下是三个独立调研团队对同一问题的回答。请交叉验证，` +
-  `标出三方一致的结论、存在分歧的点、以及可能的盲点。\n\n` +
-  `问题：${question}\n\n` +
-  researches.map((r, i) => `### 调研 ${i + 1}\n${r.output || r.error || "(无输出)"}`).join("\n\n"),
-  { id: "research-synthesis" }
-)
+// ── 插值 ──
+// research-synthesis 的 prompt 模板需要在运行时替换上游输出
+const synthesisResult = results["research-synthesis"]
 
 wf.shutdown()
 console.log(JSON.stringify({
   type: "parallel-research",
   question,
-  phases: 2,
-  totalAgents: researches.length + 1,
-  report: verification.output,
+  layers: 2,
+  totalAgents: 4,
+  report: synthesisResult.output,
 }, null, 2))

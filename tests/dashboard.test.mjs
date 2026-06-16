@@ -33,10 +33,27 @@ describe("renderDashboard", () => {
     rmSync(workdir, { recursive: true, force: true });
   });
 
-  it("generates HTML with meta refresh tag", () => {
+  it("generates HTML with meta refresh AND live JS timer", () => {
     renderDashboard(workdir, makeStatus());
     const html = readFileSync(join(workdir, "dashboard.html"), "utf-8");
+    // Meta refresh reloads the file from disk (picks up regenerated content from 1s timer in runner)
     assert.ok(html.includes('<meta http-equiv="refresh" content="3">'));
+    // JS timer updates duration cells in-browser each second (smooth between refreshes)
+    assert.ok(html.includes("setInterval"));
+    assert.ok(html.includes("data-started"));
+  });
+
+  it("embeds data-started on running agents for JS live duration", () => {
+    const status = makeStatus({
+      agents: {
+        "a1": { status: "running", startedAt: "2025-06-15T10:05:00Z" },
+        "a2": { status: "completed", startedAt: "2025-06-15T10:00:00Z", finishedAt: "2025-06-15T10:05:00Z", durationMs: 300000 },
+      },
+    });
+    renderDashboard(workdir, status);
+    const html = readFileSync(join(workdir, "dashboard.html"), "utf-8");
+    assert.ok(html.includes('data-started="2025-06-15T10:05:00Z"'), "running agent should have data-started");
+    assert.ok(!html.match(/a2[^"]*data-started/s), "completed agent should NOT have data-started");
   });
 
   it("renders agent rows in a table", () => {

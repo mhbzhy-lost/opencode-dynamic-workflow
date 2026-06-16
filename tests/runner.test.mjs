@@ -162,6 +162,47 @@ describe("wf.agent()", () => {
     wf.shutdown()
   })
 
+  it("writes output to IPC status on success", { timeout: 10000 }, async () => {
+    const mockClient = createMockClient({ responseText: "hello world" })
+    const mockIpc = createMockIpc()
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+    })
+
+    await wf.agent("coder", "Write hello world", { id: "ipc-output-test" })
+
+    const agentStatus = mockIpc._statuses["ipc-output-test"]
+    assert.equal(agentStatus.status, "completed")
+    assert.equal(agentStatus.output, "hello world", "IPC status should contain output")
+
+    wf.shutdown()
+  })
+
+  it("writes error to IPC status on failure", { timeout: 10000 }, async () => {
+    const mockClient = createMockClient({
+      shouldFail: true,
+      failMessage: "boom",
+    })
+    const mockIpc = createMockIpc()
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+    })
+
+    await wf.agent("coder", "Do something", { id: "ipc-error-test" })
+
+    const agentStatus = mockIpc._statuses["ipc-error-test"]
+    assert.equal(agentStatus.status, "failed")
+    assert.equal(agentStatus.error, "boom", "IPC status should contain error")
+
+    wf.shutdown()
+  })
+
   it("returns failed result on error", { timeout: 10000 }, async () => {
     const mockClient = createMockClient({
       shouldFail: true,
@@ -299,6 +340,110 @@ describe("wf.parallel()", () => {
   )
 })
 
+describe("wf.dag()", () => {
+  it("executes a 2-layer DAG in correct order", { timeout: 10000 }, async () => {
+    const mockClient = createMockClient({ responseText: "ok" })
+    const mockIpc = createMockIpc()
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+    })
+
+    const results = await wf.dag([
+      { id: "a", type: "coder", prompt: "Task A", deps: [] },
+      { id: "b", type: "coder", prompt: "Task B", deps: [] },
+      { id: "c", type: "coder", prompt: "Task C", deps: ["a", "b"] },
+    ])
+
+    assert.equal(Object.keys(results).length, 3)
+    assert.equal(results.a.status, "completed")
+    assert.equal(results.b.status, "completed")
+    assert.equal(results.c.status, "completed")
+
+    wf.shutdown()
+  })
+
+  it("interpolates upstream outputs into dependent prompts", { timeout: 10000 }, async () => {
+    const prompts = []
+    const mockClient = {
+      global: { health: async () => ({ data: { healthy: true } }) },
+      session: {
+        list: async () => ({ data: [] }),
+        create: async (opts) => ({ data: { id: `s-${Math.random()}` } }),
+        prompt: async (opts) => {
+          prompts.push({ id: opts.path.id, text: opts.body.parts[0].text })
+          const text = opts.body.parts[0].text
+          return { data: { parts: [{ type: "text", text: `response to: ${text}` }] } }
+        },
+      },
+    }
+    const mockIpc = createMockIpc()
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+    })
+
+    const results = await wf.dag([
+      { id: "research", type: "coder", prompt: "Find details about X", deps: [] },
+      { id: "summary", type: "coder", prompt: "Summarize: {{research.output}}", deps: ["research"] },
+    ])
+
+    // The second agent's prompt should contain the first agent's output
+    const summaryPrompt = prompts.find(p => {
+      const text = p.text
+      return text.includes("Summarize: response to:")
+    })
+    assert.ok(summaryPrompt, "summary agent should have interpolated prompt")
+
+    wf.shutdown()
+  })
+
+  it("handles 3-layer diamond dependency", { timeout: 10000 }, async () => {
+    const executionOrder = []
+    const mockClient = {
+      global: { health: async () => ({ data: { healthy: true } }) },
+      session: {
+        list: async () => ({ data: [] }),
+        create: async (opts) => ({ data: { id: `s-${Math.random()}` } }),
+        prompt: async (opts) => {
+          const text = opts.body.parts[0].text
+          executionOrder.push(text)
+          return { data: { parts: [{ type: "text", text: `done: ${text}` }] } }
+        },
+      },
+    }
+    const mockIpc = createMockIpc()
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+    })
+
+    // Diamond: A → (B, C) → D
+    const results = await wf.dag([
+      { id: "A", type: "coder", prompt: "A", deps: [] },
+      { id: "B", type: "coder", prompt: "B", deps: ["A"] },
+      { id: "C", type: "coder", prompt: "C", deps: ["A"] },
+      { id: "D", type: "coder", prompt: "D from {{B.output}} + {{C.output}}", deps: ["B", "C"] },
+    ])
+
+    assert.equal(results.A.status, "completed")
+    assert.equal(results.B.status, "completed")
+    assert.equal(results.C.status, "completed")
+    assert.equal(results.D.status, "completed")
+    // D's prompt should contain interpolated outputs from B and C
+    assert.ok(results.D.output.includes("done: B"))
+    assert.ok(results.D.output.includes("done: C"))
+
+    wf.shutdown()
+  })
+})
+
 describe("wf.status()", () => {
   it("returns current workflow state", { timeout: 10000 }, async () => {
     const mockClient = createMockClient()
@@ -336,8 +481,8 @@ describe("wf.shutdown()", () => {
     mockIpc._pushCommand({ type: "abort" })
     // Give it time to NOT consume
     await new Promise((r) => setTimeout(r, 1500))
-    // The abort command should still be unconsumed (or state unchanged)
-    assert.equal(mockIpc._state(), "running")
+    // The abort command should still be unconsumed (state is "completed" from shutdown, not "running")
+    assert.equal(mockIpc._state(), "completed")
   })
 })
 
@@ -566,5 +711,145 @@ describe("model passthrough", () => {
     })
 
     wf.shutdown()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// worktree integration
+// ---------------------------------------------------------------------------
+
+describe("worktree integration", () => {
+  it("wf.worktree is undefined when worktree config is absent", { timeout: 10000 }, async () => {
+    const mockClient = createMockClient()
+    const mockIpc = createMockIpc()
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+    })
+
+    assert.equal(wf.worktree, undefined)
+    wf.shutdown()
+  })
+
+  it("creates a worktree and exposes it on wf.worktree when enabled + mocked", { timeout: 10000 }, async () => {
+    const execCalls = []
+    const mockExec = (cmd, args) => {
+      execCalls.push([cmd, args])
+      return Promise.resolve("")
+    }
+
+    const mockClient = createMockClient()
+    const mockIpc = createMockIpc()
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+      worktree: {
+        enable: true,
+        repoDir: "/tmp/repo",
+        branch: "wf-test-001",
+        baseBranch: "main",
+        exec: mockExec,
+      },
+    })
+
+    assert.ok(wf.worktree, "wf.worktree should be set")
+    assert.equal(wf.worktree.branch, "wf-test-001")
+    assert.equal(wf.worktree.repoDir, "/tmp/repo")
+    assert.ok(wf.worktree.path.endsWith("/.workflow/wf-test-001"))
+
+    // git worktree add was actually called
+    assert.ok(execCalls.some(([, args]) => args[0] === "-C" && args.includes("worktree") && args.includes("add")))
+
+    wf.shutdown()
+  })
+
+  it("skips worktree creation when baseUrl is provided", { timeout: 10000 }, async () => {
+    const execCalls = []
+    const mockExec = (cmd, args) => {
+      execCalls.push([cmd, args])
+      return Promise.resolve("")
+    }
+    const mockClient = createMockClient()
+    const mockIpc = createMockIpc()
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+      baseUrl: "http://127.0.0.1:1234", // user already has a server
+      worktree: {
+        enable: true,
+        repoDir: "/tmp/repo",
+        branch: "wf-test-002",
+        baseBranch: "main",
+        exec: mockExec,
+      },
+    })
+
+    assert.equal(wf.worktree, undefined, "baseUrl overrides local worktree creation")
+    assert.equal(execCalls.length, 0, "no git commands issued when baseUrl is set")
+
+    wf.shutdown()
+  })
+
+  it("shutdown writes worktree info to IPC result", { timeout: 10000 }, async () => {
+    const mockExec = () => Promise.resolve("")
+    const mockClient = createMockClient()
+    const mockIpc = createMockIpc()
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+      worktree: {
+        enable: true,
+        repoDir: "/tmp/repo",
+        branch: "wf-test-003",
+        baseBranch: "main",
+        exec: mockExec,
+      },
+    })
+
+    wf.shutdown()
+
+    const result = mockIpc._result()
+    assert.ok(result, "result should be written on shutdown")
+    assert.ok(result.worktree, "result should include worktree info")
+    assert.equal(result.worktree.branch, "wf-test-003")
+  })
+
+  it("shutdown does NOT auto-remove the worktree (main agent merges it)", { timeout: 10000 }, async () => {
+    const execCalls = []
+    const mockExec = (cmd, args) => {
+      execCalls.push([cmd, args])
+      return Promise.resolve("")
+    }
+    const mockClient = createMockClient()
+    const mockIpc = createMockIpc()
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+      worktree: {
+        enable: true,
+        repoDir: "/tmp/repo",
+        branch: "wf-test-004",
+        baseBranch: "main",
+        exec: mockExec,
+      },
+    })
+
+    wf.shutdown()
+
+    // Should only have seen the initial add; no "remove" in execCalls
+    const removeCalls = execCalls.filter(
+      ([, args]) => args.includes("remove")
+    )
+    assert.equal(removeCalls.length, 0, "worktree is NOT auto-removed")
   })
 })

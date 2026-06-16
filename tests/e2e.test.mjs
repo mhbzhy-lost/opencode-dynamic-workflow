@@ -337,7 +337,7 @@ describe("e2e: workflow script", () => {
         assert.fail(`stdout is not valid JSON: ${stdout.slice(0, 500)}`)
       }
       assert.equal(result.type, "parallel-research")
-      assert.equal(result.phases, 2)
+      assert.equal(result.layers, 2)
       assert.equal(result.totalAgents, 4) // 3 research + 1 synthesis
       assert.ok(result.report, "report should not be empty")
 
@@ -350,7 +350,7 @@ describe("e2e: workflow script", () => {
       assert.ok(existsSync(statusPath), "status.json should exist")
       const status = JSON.parse(readFileSync(statusPath, "utf8"))
 
-      assert.equal(status.state, "running") // not updated to "completed" by script — only shutdown writes result
+      assert.equal(status.state, "completed") // shutdown() now explicitly marks workflow as completed
       assert.ok(status.agents["research-tech"], "agent research-tech should exist")
       assert.ok(status.agents["research-practices"], "agent research-practices should exist")
       assert.ok(status.agents["research-risks"], "agent research-risks should exist")

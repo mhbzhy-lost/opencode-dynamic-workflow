@@ -22,51 +22,32 @@ describe("workflow-hint plugin", () => {
     assert.deepEqual(functionExports, ["WorkflowHintPlugin"])
   })
 
-  it("任何 task 调用都抛出 shared policy 提示", async () => {
+  it("task + background=true → 放行", async () => {
     const hook = await loadHook()
-    await assert.rejects(
-      () => hook({ tool: "task" }, { args: { prompt: "帮我写一个 hello world 函数" } }),
-      /subagent-dispatch/,
+    await assert.doesNotReject(() =>
+      hook({ tool: "task" }, { args: { prompt: "do work", background: true } }),
     )
   })
 
-  it("提示内容包含 workflow 推荐", async () => {
+  it("task + background 未设置 → 拦截", async () => {
     const hook = await loadHook()
-    try {
-      await hook({ tool: "task" }, { args: { prompt: "do work" } })
-      assert.fail("should throw")
-    } catch (err) {
-      assert.ok(err.message.includes("workflow 脚本编排"))
-    }
+    await assert.rejects(
+      () => hook({ tool: "task" }, { args: { prompt: "do work" } }),
+      (err) => {
+        assert.ok(err.message.includes("background"), "提示应包含 'background'")
+        return true
+      },
+    )
   })
 
-  it("提示内容包含 DAG/后台/worktree 通用约束", async () => {
+  it("task + background=false → 拦截", async () => {
     const hook = await loadHook()
-    try {
-      await hook({ tool: "task" }, { args: { prompt: "do work" } })
-      assert.fail("should throw")
-    } catch (err) {
-      assert.ok(err.message.includes("git worktree 隔离"))
-      assert.ok(err.message.includes("后台模式"))
-      assert.ok(err.message.includes("skip-workflow-hint"))
-    }
-  })
-
-  it("提示内容包含 workflow-usage skill 加载引导", async () => {
-    const hook = await loadHook()
-    try {
-      await hook({ tool: "task" }, { args: { prompt: "do work" } })
-      assert.fail("should throw")
-    } catch (err) {
-      assert.ok(err.message.includes("workflow-usage skill"))
-      assert.ok(err.message.includes("API"))
-    }
-  })
-
-  it("skip-workflow-hint → 放行", async () => {
-    const hook = await loadHook()
-    await assert.doesNotReject(() =>
-      hook({ tool: "task" }, { args: { prompt: "同时执行三个探索任务 skip-workflow-hint" } }),
+    await assert.rejects(
+      () => hook({ tool: "task" }, { args: { prompt: "do work", background: false } }),
+      (err) => {
+        assert.ok(err.message.includes("后台"), "提示应包含'后台'")
+        return true
+      },
     )
   })
 
@@ -75,5 +56,17 @@ describe("workflow-hint plugin", () => {
     await assert.doesNotReject(() =>
       hook({ tool: "bash" }, { args: { command: "ls" } }),
     )
+  })
+
+  it("拦截信息不推荐 workflow 编排决策", async () => {
+    const hook = await loadHook()
+    try {
+      await hook({ tool: "task" }, { args: { prompt: "do work" } })
+      assert.fail("should throw")
+    } catch (err) {
+      assert.ok(!err.message.includes("workflow 脚本编排"), "不应包含编排推荐")
+      assert.ok(!err.message.includes("workflow-usage skill"), "不应包含 skill 引导")
+      assert.ok(!err.message.includes("skip-workflow-hint"), "不应包含逃生舱标记")
+    }
   })
 })

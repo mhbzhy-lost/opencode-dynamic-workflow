@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
-import { createIpc } from "../lib/ipc.mjs";
+import { createIpc, readCommand, waitForCommand } from "../lib/ipc.mjs";
 
 /**
  * Helper: create a temp project root with a .workflow/ subdirectory.
@@ -174,5 +174,79 @@ describe("createIpc", () => {
     const s = ipc.readStatus();
     assert.equal(s.state, "running");
     assert.equal(s.agents.x.status, "queued");
+  });
+});
+
+describe("readCommand", () => {
+  let commandsDir;
+  let tempDir;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "readcmd-test-"));
+    commandsDir = join(tempDir, "commands");
+    mkdirSync(commandsDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("returns null when command file does not exist", () => {
+    const result = readCommand(commandsDir, "agent_prompt", "research-1");
+    assert.equal(result, null);
+  });
+
+  it("returns parsed JSON when command file exists", () => {
+    const data = {
+      type: "agent_prompt",
+      id: "research-1",
+      prompt: "Do research on topic X",
+      meta: { timestamp: "2024-01-01T00:00:00Z" },
+    };
+    writeFileSync(join(commandsDir, "agent_prompt_research-1.json"), JSON.stringify(data));
+
+    const result = readCommand(commandsDir, "agent_prompt", "research-1");
+    assert.deepEqual(result, data);
+  });
+
+  it("throws clear error on malformed JSON", () => {
+    writeFileSync(join(commandsDir, "agent_prompt_broken.json"), "{ invalid json ");
+
+    assert.throws(
+      () => readCommand(commandsDir, "agent_prompt", "broken"),
+      /malformed JSON/i
+    );
+  });
+});
+
+describe("waitForCommand", () => {
+  let commandsDir;
+  let tempDir;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "waitcmd-test-"));
+    commandsDir = join(tempDir, "commands");
+    mkdirSync(commandsDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("resolves when command file appears after delay", async () => {
+    const data = { type: "agent_prompt", id: "a1", prompt: "hello" };
+    setTimeout(() => {
+      writeFileSync(join(commandsDir, "agent_prompt_a1.json"), JSON.stringify(data));
+    }, 50);
+
+    const result = await waitForCommand(commandsDir, "agent_prompt", "a1", { pollInterval: 20, timeout: 2000 });
+    assert.deepEqual(result, data);
+  });
+
+  it("throws on timeout when file never appears", async () => {
+    await assert.rejects(
+      () => waitForCommand(commandsDir, "agent_prompt", "missing", { pollInterval: 10, timeout: 100 }),
+      /timeout/i
+    );
   });
 });
