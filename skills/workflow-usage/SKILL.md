@@ -18,7 +18,7 @@ description: opencode-dynamic-workflow 的 API 参考（createWorkflow、wf.agen
 
 ### 方式 A：使用预定义 workflow 模板（推荐起步）
 
-子模块 `$OPENCODE_WORKFLOW_ROOT/workflows/` 下有现成模板：
+**内置模板**只读，位于 `$OPENCODE_WORKFLOW_ROOT/workflows/`：
 
 | 模板 | 文件 | 用途 |
 |---|---|---|
@@ -74,15 +74,14 @@ node $OPENCODE_WORKFLOW_ROOT/workflows/parallel-research.mjs 分析 React 性能
 
 ```javascript
 #!/usr/bin/env node
-// 写法 A（推荐）：脚本放在 $OPENCODE_WORKFLOW_ROOT/workflows/
-// 下，与 parallel-research.mjs 同目录，使用相对 import
-import { createWorkflow } from "../lib/runner.mjs"
-
-// 写法 B：脚本放在任意位置，用绝对文件路径（依赖 $OPENCODE_WORKFLOW_ROOT 环境变量，
+// 写法 A（推荐）：脚本放在目标仓的 .workflow/scripts/ 下，
+// 用绝对路径引用 workflow lib（依赖 $OPENCODE_WORKFLOW_ROOT 环境变量，
 // install-opencode.sh 自动注册到 shell）
-// const { createWorkflow } = await import(
-//   `${process.env.OPENCODE_WORKFLOW_ROOT}/lib/runner.mjs`
-// )
+import { createWorkflow } from `${process.env.OPENCODE_WORKFLOW_ROOT}/lib/runner.mjs`
+
+// 写法 B：脚本放在 $OPENCODE_WORKFLOW_ROOT/workflows/ 下（仅 vendor 团队使用，
+// 用户自定义脚本不要往 vendor 目录写）。使用相对 import：
+// import { createWorkflow } from "../lib/runner.mjs"
 
 const wf = await createWorkflow({
   model: "anthropic-idealab/claude-sonnet-4-20250514",
@@ -129,13 +128,18 @@ const wf = await createWorkflow({
 ```
 
 **worktree 行为说明：**
-- `enable: true` 且无 `baseUrl` 时，脚本自动执行 `git worktree add -b <branch>`，
+- `enable: true` 时脚本自动执行 `git worktree add -b <branch>`，
   并将 `opencode serve` 启动在该 worktree 目录下
-- 所有 subagent session 自动工作在 worktree 中，主 agent 无需干预
-- `shutdown()` 保留 worktree（不自动 merge/删除）
+- **所有 agent 共用同一个 worktree**（不是每个 agent 一个）。DAG 层内无依赖的 agent 会并发跑，**如果改同一文件必冲突**
+- shutdown 后保留 worktree 与分支（**不自动 merge、不自动删除**），原因：
+  merge 冲突需要 LLM 判断（不能机械合），删除需主 agent 确认用户已审完代码
 - `wf.worktree` 属性保存创建后的 worktree 状态（path/branch/repoDir）
 - `shutdown()` 写入 IPC result 时包含 `worktree` 字段，供 CLI 脚本告知主 agent 如何合并
-- 合并由主 agent 执行（处理可能的冲突）
+
+**coding workflow 并发策略：**
+- agent 改不同文件 → DAG 同层无 deps，自动并行
+- agent 改同一文件 → 必须通过 `deps` 串行编排（层间顺序由 DAG 拓扑决定）
+- 不要为了"看起来可并行"而创建多个 worktree——单 worktree + DAG 串行即可，省 merge 成本
 
 **返回对象：**
 
@@ -272,11 +276,11 @@ node $OPENCODE_WORKFLOW_ROOT/workflows/parallel-research.mjs \
 ## Checklist
 
 - [ ] 确认 agent 数量 >=3 或有 DAG 依赖，否则直接用 Task tool
-- [ ] 选择预定义模板或编写自定义脚本
+- [ ] 选择预定义模板或编写自定义脚本（自定义脚本放在**目标仓**，不要往 vendor 目录写）
 - [ ] 指定 `--model`（provider 名必须与 opencode 配置中的 provider ID 一致）
 - [ ] 问题文本用引号包裹，避免 shell 拆分
+- [ ] coding workflow：改不同文件的 agent 放同层并行；改同一文件的 agent 用 deps 串行
+- [ ] coding workflow 启用 `worktree.enable: true`（脚本自动创建 1 个 worktree 供所有 agent 共用）
+- [ ] workflow 完成后主 agent 执行 `git merge` + `git worktree remove` + `git branch -d`（冲突用 LLM 判断）
 - [ ] 复杂依赖用 `wf.dag()` 声明式编排（自动拓扑分层 + 插值）
 - [ ] 需要主 agent 控制 prompt 时用 `wf.needPrompt()` 双向通信
-- [ ] coding 类 workflow 启用 `worktree.enable: true`（脚本自动创建 worktree）
-- [ ] workflow 完成后读取 report，根据 worktree 指引执行合并（冲突用 LLM 判断）
-- [ ] 合并完成后执行 `git worktree remove` 和 `git branch -d`
