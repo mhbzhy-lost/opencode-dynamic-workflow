@@ -175,6 +175,18 @@ describe("createIpc", () => {
     assert.equal(s.state, "running");
     assert.equal(s.agents.x.status, "queued");
   });
+
+  it("advancePhase serializes 20 concurrent calls without corruption", async () => {
+    const promises = [];
+    for (let i = 0; i < 20; i++) {
+      promises.push(ipc.advancePhase(20));
+    }
+    await Promise.all(promises);
+
+    const status = ipc.readStatus();
+    assert.equal(status.phase, 20, `expected phase 20, got ${status.phase}`);
+    assert.equal(status.totalPhases, 20);
+  });
 });
 
 describe("readCommand", () => {
