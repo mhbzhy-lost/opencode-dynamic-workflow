@@ -74,12 +74,14 @@ node $CLAUDE_CONFIG_HOME/vendor/opencode-dynamic-workflow/workflows/parallel-res
 
 ```javascript
 #!/usr/bin/env node
-// 推荐写法：裸 import，前提是本机已跑过 install-opencode.sh（脚本里做了 npm link）
-import { createWorkflow } from "opencode-dynamic-workflow"
+// 写法 A（推荐）：脚本放在 $CLAUDE_CONFIG_HOME/vendor/opencode-dynamic-workflow/workflows/
+// 下，与 parallel-research.mjs 同目录，使用相对 import
+import { createWorkflow } from "../lib/runner.mjs"
 
-// 或：脚本与 lib 在同一仓库下时用相对路径，例如脚本放在
-// $CLAUDE_CONFIG_HOME/vendor/opencode-dynamic-workflow/workflows/my-wf.mjs
-// import { createWorkflow } from "../lib/runner.mjs"
+// 写法 B：脚本放在任意位置，用绝对文件路径（依赖 $CLAUDE_CONFIG_HOME 环境变量）
+// const { createWorkflow } = await import(
+//   `${process.env.CLAUDE_CONFIG_HOME}/vendor/opencode-dynamic-workflow/lib/runner.mjs`
+// )
 
 const wf = await createWorkflow({
   model: "anthropic-idealab/claude-sonnet-4-20250514",

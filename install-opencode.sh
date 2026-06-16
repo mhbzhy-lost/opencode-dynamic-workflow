@@ -25,13 +25,12 @@ done
 echo "[install] npm install in $ROOT"
 (cd "$ROOT" && npm install --production 2>&1 | tail -1)
 
-# 1.5 npm link — 让 opencode-dynamic-workflow 可被任意 cwd 下的脚本裸 import
-# (SKILL.md 自定义脚本示例：import { createWorkflow } from "opencode-dynamic-workflow")
-if (cd "$ROOT" && npm link 2>&1 | tail -1); then
-  echo "[ok] npm link 完成：opencode-dynamic-workflow 已注册到全局 node_modules"
-else
-  echo "[warn] npm link 失败；自定义脚本需改用相对路径 import (../lib/runner.mjs)" >&2
-fi
+# 注意：Node ESM 不支持 npm link 的 bare import（仅 CJS 生效），所以不做
+# 全局 link。自定义 workflow 脚本请用以下 two import 方式：
+#   1) 脚本放在 $ROOT/workflows/ 下：import ... from "../lib/runner.mjs"
+#   2) 脚本放在任意位置：
+#      const { ... } = await import(\`\${process.env.CLAUDE_CONFIG_HOME}/vendor/opencode-dynamic-workflow/lib/runner.mjs\`)
+# 详见 skills/workflow-usage/SKILL.md 的『编写自定义 workflow 脚本』章节。
 
 # 2. 软链插件
 mkdir -p "$OPENCODE_PLUGIN_DIR"
