@@ -26,27 +26,6 @@ function install(configDir, fakeZshrc) {
 }
 
 describe("install-opencode.sh", () => {
-  it("plugin 软链指向 submodule plugins/workflow-hint.js", () => {
-    const tmp = mkdtempSync(join(tmpdir(), "install-test-"))
-    const home = mkdtempSync(join(tmpdir(), "install-home-"))
-    const fakeZshrc = join(home, ".zshrc")
-    try {
-      const out = install(tmp, fakeZshrc)
-      assert.ok(out.includes("[ok]"))
-
-      const link = join(tmp, "plugins", "workflow-hint.js")
-      assert.ok(existsSync(link), `plugin symlink should exist: ${link}`)
-      const target = readlinkSync(link)
-      assert.ok(
-        target.endsWith("opencode-dynamic-workflow/plugins/workflow-hint.js"),
-        `unexpected target: ${target}`
-      )
-    } finally {
-      rmSync(tmp, { recursive: true, force: true })
-      rmSync(home, { recursive: true, force: true })
-    }
-  })
-
   it("skill 软链指向 submodule skills/workflow-usage", () => {
     const tmp = mkdtempSync(join(tmpdir(), "install-test-"))
     const home = mkdtempSync(join(tmpdir(), "install-home-"))

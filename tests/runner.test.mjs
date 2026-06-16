@@ -502,6 +502,85 @@ describe("wf.dag()", () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// wf.dag() — per-node worktree isolation (A: accumulator + per-node worktrees)
+// ---------------------------------------------------------------------------
+describe("wf.dag() with per-node worktrees", () => {
+  it("creates a worktree per DAG node and routes each agent via query.directory", { timeout: 15000 }, async () => {
+    const promptCalls = []
+    const mockClient = {
+      global: { health: async () => ({ data: { healthy: true } }) },
+      session: {
+        list: async () => ({ data: [] }),
+        create: async () => ({ data: { id: `s-${Math.random()}` } }),
+        prompt: async (opts) => {
+          promptCalls.push({ query: opts.query, body: opts.body })
+          return { data: { parts: [{ type: "text", text: "ok" }] } }
+        },
+      },
+    }
+    const mockIpc = createMockIpc()
+
+    const worktreeEvents = []
+    const mockWorktreeApi = {
+      createNode: async (repoDir, nodeId, baseBranch) => {
+        worktreeEvents.push({ op: "createNode", repoDir, nodeId, baseBranch })
+        return { path: `/repo/.workflow/wt-${nodeId}`, branch: `wf-${nodeId}`, repoDir }
+      },
+      consolidate: async (nodeDirs, accumulatorDir) => {
+        worktreeEvents.push({ op: "consolidate", nodeDirs, accumulatorDir })
+        return { merged: nodeDirs.map(d => d.split("/").pop()), conflicts: [] }
+      },
+      removeNode: async (nodeDir) => {
+        worktreeEvents.push({ op: "removeNode", nodeDir })
+      },
+      ensureAccumulator: async (repoDir, baseBranch) => {
+        worktreeEvents.push({ op: "ensureAccumulator", repoDir, baseBranch })
+        return "/repo/.workflow/accumulator"
+      },
+    }
+
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+      worktree: { enable: true, repoDir: "/repo", baseBranch: "main" },
+      _worktreeApi: mockWorktreeApi,
+    })
+
+    const results = await wf.dag([
+      { id: "A", type: "coder", prompt: "Task A", deps: [] },
+      { id: "B", type: "coder", prompt: "Task B", deps: [] },
+      { id: "C", type: "coder", prompt: "Task C", deps: ["A", "B"] },
+    ])
+
+    // Verify: each agent was routed to its own worktree directory
+    const aCall = promptCalls.find(c => c.body.parts[0].text.includes("Task A"))
+    const bCall = promptCalls.find(c => c.body.parts[0].text.includes("Task B"))
+    const cCall = promptCalls.find(c => c.body.parts[0].text.includes("Task C"))
+
+    assert.ok(aCall, "agent A should have been prompted")
+    assert.ok(bCall, "agent B should have been prompted")
+    assert.ok(cCall, "agent C should have been prompted")
+
+    assert.equal(aCall.query?.directory, "/repo/.workflow/wt-A", "agent A routed to worktree A")
+    assert.equal(bCall.query?.directory, "/repo/.workflow/wt-B", "agent B routed to worktree B")
+    assert.equal(cCall.query?.directory, "/repo/.workflow/wt-C", "agent C routed to worktree C")
+
+    // Verify worktree lifecycle: create → consolidate → remove for each layer
+    const creates = worktreeEvents.filter(e => e.op === "createNode")
+    const consolidates = worktreeEvents.filter(e => e.op === "consolidate")
+    const removes = worktreeEvents.filter(e => e.op === "removeNode")
+
+    assert.ok(creates.length >= 1, "should create node worktrees")
+    assert.ok(consolidates.length >= 1, "should consolidate after each layer")
+    assert.ok(removes.length >= 1, "should remove node worktrees after consolidation")
+
+    wf.shutdown()
+  })
+})
+
 describe("wf.status()", () => {
   it("returns current workflow state", { timeout: 10000 }, async () => {
     const mockClient = createMockClient()

@@ -16,36 +16,7 @@ echo "[install] npm install in $ROOT"
 #   2) 脚本放在任意位置：用 OPENCODE_WORKFLOW_ROOT 环境变量（由本脚本注册到 shell）
 # 详见 skills/workflow-usage/SKILL.md 的『编写自定义 workflow 脚本』章节。
 
-# 2. 软链插件
-OPENCODE_PLUGIN_DIR="$OPENCODE_CONFIG_DIR/plugins"
-mkdir -p "$OPENCODE_PLUGIN_DIR"
-PLUGIN_SRC="$ROOT/plugins/workflow-hint.js"
-PLUGIN_DST="$OPENCODE_PLUGIN_DIR/workflow-hint.js"
-
-if [ ! -f "$PLUGIN_SRC" ]; then
-  echo "[error] 插件文件不存在: $PLUGIN_SRC" >&2
-  exit 1
-fi
-
-if [ -L "$PLUGIN_DST" ]; then
-  existing_target=$(readlink "$PLUGIN_DST")
-  if [ "$existing_target" = "$PLUGIN_SRC" ]; then
-    echo "[ok] plugin 软链已存在且正确: $PLUGIN_DST"
-  else
-    rm "$PLUGIN_DST"
-    ln -s "$PLUGIN_SRC" "$PLUGIN_DST"
-    echo "[ok] plugin 软链已更新: $PLUGIN_DST -> $PLUGIN_SRC"
-  fi
-elif [ -f "$PLUGIN_DST" ]; then
-  rm "$PLUGIN_DST"
-  ln -s "$PLUGIN_SRC" "$PLUGIN_DST"
-  echo "[ok] plugin 替换为软链: $PLUGIN_DST -> $PLUGIN_SRC"
-else
-  ln -s "$PLUGIN_SRC" "$PLUGIN_DST"
-  echo "[ok] plugin 软链已创建: $PLUGIN_DST -> $PLUGIN_SRC"
-fi
-
-# 3. 软链 skill
+# 2. 软链 skill
 OPENCODE_SKILL_DIR="$OPENCODE_CONFIG_DIR/skills"
 SKILL_NAME="workflow-usage"
 SKILL_SRC="$ROOT/skills/$SKILL_NAME"
@@ -96,4 +67,4 @@ fi
 
 # 5. 输出信息
 echo "[ok] workflow 模板目录: $ROOT/workflows/"
-echo "[next] 重启 opencode 以加载 workflow-hint 插件和 workflow-usage skill"
+echo "[next] 重启 opencode 以加载 workflow-usage skill"
