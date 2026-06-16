@@ -18,7 +18,7 @@ description: opencode-dynamic-workflow 的 API 参考（createWorkflow、wf.agen
 
 ### 方式 A：使用预定义 workflow 模板（推荐起步）
 
-子模块 `vendor/opencode-dynamic-workflow/workflows/` 下有现成模板：
+子模块 `$CLAUDE_CONFIG_HOME/vendor/opencode-dynamic-workflow/workflows/` 下有现成模板：
 
 | 模板 | 文件 | 用途 |
 |---|---|---|
@@ -27,7 +27,7 @@ description: opencode-dynamic-workflow 的 API 参考（createWorkflow、wf.agen
 #### parallel-research 用法
 
 ```bash
-node vendor/opencode-dynamic-workflow/workflows/parallel-research.mjs \
+node $CLAUDE_CONFIG_HOME/vendor/opencode-dynamic-workflow/workflows/parallel-research.mjs \
   [--model <provider/model>] \
   [--base-url <url>] \
   [--resume] \
@@ -47,23 +47,23 @@ node vendor/opencode-dynamic-workflow/workflows/parallel-research.mjs \
 **正确示例：**
 ```bash
 # 单个研究问题
-node workflows/parallel-research.mjs \
+node $CLAUDE_CONFIG_HOME/vendor/opencode-dynamic-workflow/workflows/parallel-research.mjs \
   --model "anthropic-idealab/claude-sonnet-4-20250514" \
   "分析 React Server Components 的性能优势和适用场景"
 
 # 复合问题（用一段文本描述）
-node workflows/parallel-research.mjs \
+node $CLAUDE_CONFIG_HOME/vendor/opencode-dynamic-workflow/workflows/parallel-research.mjs \
   "比较 Vite、Turbopack、Rspack 的构建速度、生态成熟度和迁移成本"
 ```
 
 **错误示例（不要这样做）：**
 ```bash
 # 错误：不存在 --topic 和 --questions 参数
-node workflows/parallel-research.mjs \
+node $CLAUDE_CONFIG_HOME/vendor/opencode-dynamic-workflow/workflows/parallel-research.mjs \
   --topic "主题" --questions "问题1" "问题2"
 
 # 错误：问题文本没有引号包裹，会被 shell 拆分
-node workflows/parallel-research.mjs 分析 React 性能
+node $CLAUDE_CONFIG_HOME/vendor/opencode-dynamic-workflow/workflows/parallel-research.mjs 分析 React 性能
 ```
 
 ### 方式 B：编写自定义 workflow 脚本
@@ -74,8 +74,12 @@ node workflows/parallel-research.mjs 分析 React 性能
 
 ```javascript
 #!/usr/bin/env node
-import { createWorkflow } from "../lib/runner.mjs"
-// 或 import { createWorkflow } from "opencode-dynamic-workflow"
+// 推荐写法：裸 import，前提是本机已跑过 install-opencode.sh（脚本里做了 npm link）
+import { createWorkflow } from "opencode-dynamic-workflow"
+
+// 或：脚本与 lib 在同一仓库下时用相对路径，例如脚本放在
+// $CLAUDE_CONFIG_HOME/vendor/opencode-dynamic-workflow/workflows/my-wf.mjs
+// import { createWorkflow } from "../lib/runner.mjs"
 
 const wf = await createWorkflow({
   model: "anthropic-idealab/claude-sonnet-4-20250514",
@@ -252,8 +256,8 @@ echo '{"command":"abort"}' > .workflow/commands/002-abort.json
 workflow 脚本是独立 Node 进程，从主 agent 的视角通过 Bash tool 调用：
 
 ```bash
-# 在子模块目录下运行
-node vendor/opencode-dynamic-workflow/workflows/parallel-research.mjs \
+# 通过 $CLAUDE_CONFIG_HOME 绝对路径调用（推荐：cwd 不敏感）
+node $CLAUDE_CONFIG_HOME/vendor/opencode-dynamic-workflow/workflows/parallel-research.mjs \
   --model "anthropic-idealab/claude-sonnet-4-20250514" \
   "研究问题文本"
 ```

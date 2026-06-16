@@ -3,7 +3,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NODE_BIN="${NODE_BIN:-node}"
-OPENCODE_PLUGIN_DIR="${OPENCODE_PLUGIN_DIR:-$HOME/.config/opencode/plugins}"
+# 默认目录：尊重 OPENCODE_CONFIG_DIR（用于非默认安装路径），否则用 ~/.config/opencode
+OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
+OPENCODE_PLUGIN_DIR="${OPENCODE_PLUGIN_DIR:-$OPENCODE_CONFIG_DIR/plugins}"
+OPENCODE_SKILL_DIR="${OPENCODE_SKILL_DIR:-$OPENCODE_CONFIG_DIR/skills}"
 INTERACTIVE=true
 
 while [ "$#" -gt 0 ]; do
@@ -21,6 +24,14 @@ done
 # 1. 安装 npm 依赖
 echo "[install] npm install in $ROOT"
 (cd "$ROOT" && npm install --production 2>&1 | tail -1)
+
+# 1.5 npm link — 让 opencode-dynamic-workflow 可被任意 cwd 下的脚本裸 import
+# (SKILL.md 自定义脚本示例：import { createWorkflow } from "opencode-dynamic-workflow")
+if (cd "$ROOT" && npm link 2>&1 | tail -1); then
+  echo "[ok] npm link 完成：opencode-dynamic-workflow 已注册到全局 node_modules"
+else
+  echo "[warn] npm link 失败；自定义脚本需改用相对路径 import (../lib/runner.mjs)" >&2
+fi
 
 # 2. 软链插件
 mkdir -p "$OPENCODE_PLUGIN_DIR"
@@ -51,7 +62,6 @@ else
 fi
 
 # 3. 软链 skill
-OPENCODE_SKILL_DIR="${OPENCODE_SKILL_DIR:-$HOME/.config/opencode/skills}"
 SKILL_NAME="workflow-usage"
 SKILL_SRC="$ROOT/skills/$SKILL_NAME"
 SKILL_DST="$OPENCODE_SKILL_DIR/$SKILL_NAME"
