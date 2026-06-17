@@ -76,4 +76,31 @@ describe("install-opencode.sh", () => {
       rmSync(home, { recursive: true, force: true })
     }
   })
+
+  it("原子写 .zshrc 保留已有内容", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "install-test-"))
+    const home = mkdtempSync(join(tmpdir(), "install-home-"))
+    const fakeZshrc = join(home, ".zshrc")
+    const existingContent = "# my existing config\nalias ll='ls -la'\n"
+    writeFileSync(fakeZshrc, existingContent)
+    try {
+      install(tmp, fakeZshrc)
+      const rc = readFileSync(fakeZshrc, "utf8")
+      assert.ok(
+        rc.includes("# my existing config"),
+        `ZSHRC should preserve existing content, got:\n${rc}`
+      )
+      assert.ok(
+        rc.includes("alias ll='ls -la'"),
+        `ZSHRC should preserve existing aliases, got:\n${rc}`
+      )
+      assert.ok(
+        rc.includes("export OPENCODE_WORKFLOW_ROOT="),
+        `ZSHRC should append new export, got:\n${rc}`
+      )
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
 })

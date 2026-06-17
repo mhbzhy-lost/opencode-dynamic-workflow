@@ -96,4 +96,21 @@ describe("merge-gate.createWorktreeApi", () => {
     const checkout = calls.find(([, a]) => a.includes("checkout") && a.includes("main"))
     assert.ok(checkout, "should checkout main before merge")
   })
+
+  it("mergeAccumulator includes workflow ID in commit message", async () => {
+    const calls = []
+    const exec = (cmd, args) => {
+      calls.push([cmd, args.join ? args.join(" ") : args])
+      return Promise.resolve("")
+    }
+    const { createWorktreeApi } = await import("../lib/merge-gate.mjs")
+    const api = createWorktreeApi({ repoDir: "/repo", baseBranch: "main", exec })
+
+    await api.mergeAccumulator("/repo/.workflow/accumulator", "main", { workflowId: "health-review-123" })
+
+    const commitCall = calls.find(([, a]) => a.includes("commit") && a.includes("-m"))
+    assert.ok(commitCall, "should commit")
+    const commitMsg = Array.isArray(commitCall[1]) ? commitCall[1].join(" ") : commitCall[1]
+    assert.ok(commitMsg.includes("health-review-123"), `commit message should include workflow ID, got: ${commitMsg}`)
+  })
 })

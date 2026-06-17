@@ -105,4 +105,26 @@ describe("resolveWorkflowConfig", () => {
     assert.equal(cfg.maxConcurrent, 6)
     assert.deepEqual(cfg.positional, ["my question"])
   })
+
+  // ── Missing value validation ──
+  it("throws when --model is passed without a value", () => {
+    assert.throws(
+      () => resolveWorkflowConfig(["--model"], {}),
+      /missing value for --model/,
+    )
+  })
+
+  it("throws when --base-url is passed without a value", () => {
+    assert.throws(
+      () => resolveWorkflowConfig(["--base-url"], {}),
+      /missing value for --base-url/,
+    )
+  })
+
+  it("throws when --max-concurrent is passed without a value", () => {
+    assert.throws(
+      () => resolveWorkflowConfig(["--max-concurrent"], {}),
+      /missing value for --max-concurrent/,
+    )
+  })
 })

@@ -30,7 +30,7 @@ const config = resolveWorkflowConfig(process.argv.slice(2), {
 })
 const wf = await createWorkflow(config)
 // ... 你的 DAG 编排 ...
-wf.shutdown()
+await wf.shutdown()
 ```
 
 **支持的 CLI 参数**（全部可选）：
@@ -165,8 +165,9 @@ node $OPENCODE_WORKFLOW_ROOT/workflows/parallel-research.mjs 分析 React 性能
 #!/usr/bin/env node
 // 写法 A（推荐）：脚本放在目标仓的 .workflow/scripts/ 下，
 // 用绝对路径引用 workflow lib（依赖 $OPENCODE_WORKFLOW_ROOT 环境变量，
-// install-opencode.sh 自动注册到 shell）
-import { createWorkflow } from `${process.env.OPENCODE_WORKFLOW_ROOT}/lib/runner.mjs`
+// install-opencode.sh 自动注册到 shell）。
+// 注意：ESM 静态 import 不支持模板字符串，必须用动态 await import()：
+const { createWorkflow } = await import(`${process.env.OPENCODE_WORKFLOW_ROOT}/lib/runner.mjs`)
 
 // 写法 B：脚本放在 $OPENCODE_WORKFLOW_ROOT/workflows/ 下（仅 vendor 团队使用，
 // 用户自定义脚本不要往 vendor 目录写）。使用相对 import：
@@ -186,12 +187,12 @@ const results = await wf.parallel([
 
 // Phase 2：综合（使用 Phase 1 的输出）
 const report = await wf.agent("general",
-  `基于以下发现生成报告：\n\n` +
-  results.map((r, i) => `### ${r.id}\n${r.output || r.error}`).join("\n\n"),
+  `基于以下发现生成报告：\n` +
+  results.map((r, i) => `### ${r.id}\n${r.output || r.error}`).join("\n"),
   { id: "synthesis" }
 )
 
-wf.shutdown()
+await wf.shutdown()
 console.log(report.output)
 ```
 
@@ -199,6 +200,7 @@ console.log(report.output)
 
 ```javascript
 const wf = await createWorkflow({
+  id: string,                   // workflow ID，用于 audit log 和 commit message（可选，默认自动生成）
   model: string | { providerID, modelID },  // 默认 model（可选）
   baseUrl: string,          // 已有 server URL（省略则自动启动）
   workdir: string,          // IPC 目录，默认 ".workflow"
@@ -244,7 +246,7 @@ const wf = await createWorkflow({
 | `wf.dashboardPath` | dashboard HTML 文件路径 |
 | `wf.snapshot` | 恢复的快照数据（未恢复则 null） |
 | `wf.worktree` | worktree 状态（`{ path, branch, repoDir, baseBranch }`），未启用或未创建时为 undefined |
-| `wf.shutdown()` | 清理：停止命令循环、写结果（含 worktree 信息）、关闭自动启动的 server |
+| `wf.shutdown()` | 清理：停止命令循环、写结果（含 worktree 信息）、关闭自动启动的 server。**返回 Promise**，必须 `await` 以确保 `autoMerge` 完成 |
 
 **agent spec 字段：**
 
