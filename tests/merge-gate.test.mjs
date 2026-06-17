@@ -113,4 +113,22 @@ describe("merge-gate.createWorktreeApi", () => {
     const commitMsg = Array.isArray(commitCall[1]) ? commitCall[1].join(" ") : commitCall[1]
     assert.ok(commitMsg.includes("health-review-123"), `commit message should include workflow ID, got: ${commitMsg}`)
   })
+
+  it("mergeAccumulator sanitizes workflow ID for commit message safety", async () => {
+    const calls = []
+    const exec = (cmd, args) => {
+      calls.push([cmd, args.join ? args.join(" ") : args])
+      return Promise.resolve("")
+    }
+    const { createWorktreeApi } = await import("../lib/merge-gate.mjs")
+    const api = createWorktreeApi({ repoDir: "/repo", baseBranch: "main", exec })
+
+    await api.mergeAccumulator("/repo/.workflow/accumulator", "main", { workflowId: "bad\nid;rm -rf" })
+
+    const commitCall = calls.find(([, a]) => a.includes("commit") && a.includes("-m"))
+    const commitMsg = Array.isArray(commitCall[1]) ? commitCall[1].join(" ") : commitCall[1]
+    assert.ok(!commitMsg.includes("\n"), "commit should not contain newline")
+    assert.ok(!commitMsg.includes(";"), "commit should not contain semicolon")
+    assert.ok(commitMsg.includes("bad_id_rm_-rf"), `expected sanitized ID, got: ${commitMsg}`)
+  })
 })

@@ -127,4 +127,11 @@ describe("resolveWorkflowConfig", () => {
       /missing value for --max-concurrent/,
     )
   })
+
+  it("throws when --model is followed by another flag (flag-as-value)", () => {
+    assert.throws(
+      () => resolveWorkflowConfig(["--model", "--base-url", "http://x"], {}),
+      /missing value for --model/,
+    )
+  })
 })

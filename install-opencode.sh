@@ -62,9 +62,13 @@ elif grep -Fq "OPENCODE_WORKFLOW_ROOT=" "$ZSHRC"; then
   fi
 else
   tmpfile="$(mktemp "${ZSHRC}.tmp.XXXXXX")"
-  cp "$ZSHRC" "$tmpfile"
+  # shellcheck disable=SC2064
+  trap "rm -f '$tmpfile'" EXIT
+  cat "$ZSHRC" > "$tmpfile"
   printf '\n# OPENCODE_WORKFLOW_ROOT (auto-registered by install-opencode.sh)\n%s\n' "$EXPORT_LINE" >> "$tmpfile"
-  mv "$tmpfile" "$ZSHRC"
+  cat "$tmpfile" > "$ZSHRC"
+  rm -f "$tmpfile"
+  trap - EXIT
   echo "[linked] OPENCODE_WORKFLOW_ROOT=$ROOT registered in $ZSHRC"
 fi
 
