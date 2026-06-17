@@ -14,6 +14,95 @@ description: opencode-dynamic-workflow 的 API 参考（createWorkflow、wf.agen
 
 不需要时：单个 subagent、2 个独立 subagent 直接用 Task tool 派发即可。
 
+## 推荐用法（实测验证，避免常见坑）
+
+### 自定义脚本：用 `resolveWorkflowConfig` 一行搞定参数
+
+**推荐写法**：
+```javascript
+import { createWorkflow, resolveWorkflowConfig } from "../../vendor/opencode-dynamic-workflow/lib/runner.mjs"
+
+// 一行：CLI 参数解析 + 安全默认值（openDashboard: false, dangerouslySkipPermissions: true）
+const config = resolveWorkflowConfig(process.argv.slice(2), {
+  workdir: ".workflow",           // 可选：自定义工作目录
+  // maxConcurrent: 4,            // 可选：最大并行数（默认 4）
+  // model: "anthropic/claude-sonnet-4-20250514",  // 可选：指定模型
+})
+const wf = await createWorkflow(config)
+// ... 你的 DAG 编排 ...
+wf.shutdown()
+```
+
+**支持的 CLI 参数**（全部可选）：
+- `--model <provider/model>` — 指定 LLM
+- `--base-url <url>` — 连接已有 opencode server
+- `--workdir <path>` — IPC 目录
+- `--max-concurrent <n>` — 最大并行数
+- `--dashboard` / `--no-dashboard` — 是否打开 dashboard
+- `--skip-permissions` / `--no-skip-permissions` — 是否跳过权限确认
+- `--resume` — 从快照恢复
+
+**默认值**（覆盖硬编码）：
+| 参数 | 默认 | 理由 |
+|---|---|---|
+| `openDashboard` | `false` | 主 agent 后台调度，弹窗会卡死 |
+| `dangerouslySkipPermissions` | `true` | workflow 驱动的 runs 已有用户授权 |
+| `maxConcurrent` | `4` | 保守并行，避免 LLM quota 暴涨 |
+
+**优先级**：CLI flag > `userDefaults` 参数 > 硬编码默认。
+
+### 三个易错点（实测踩坑）
+
+⚠️ **1. DAG 层数是引擎算的，不是人画的**
+
+你写 `deps: ["A", "B"]`，引擎自动拓扑排序分层。**不要在注释里写"这是第 2 层"**——引擎可能拆出 3 层。
+
+✅ 正确：只声明 `deps`，层数交给引擎
+❌ 错误：手动计算层数并假设某节点一定在某层
+
+⚠️ **2. `needsPrompt: true` 使用 idle-aware 超时（300 秒）**
+
+DAG 节点设 `needsPrompt: true` 时，引擎 emit `[workflow:need_agent]` 事件，然后等待主 agent 写 `.workflow/commands/agent_prompt_<id>.json`。
+
+**超时机制**：
+- 默认超时 300 秒（5 分钟），但**只在所有节点都空闲时才计时**
+- 如果同层有其他 agent 还在运行，即使这个节点等了很久，也不会超时
+- 只有当整个 DAG 中没有任何 agent 在跑，且当前节点仍未收到 prompt，才开始计时
+- 超时后该节点抛出 Error，`wf.dag()` 立即 reject，进程非零退出
+- 不会"部分完成"——任何一个节点超时整体即失败
+
+**场景示例**：
+```
+Layer 1: [A (ready, 跑 600ms), B (needsPrompt, 等待)]
+```
+A 跑 600ms 期间，B 的超时不启动。A 完成后，若 B 仍未收到 prompt，才开始 300s 倒计时。
+
+✅ 正确：主代理在 5 分钟内响应即可
+❌ 错误：以为 60 秒必须响应（旧版本行为）
+
+⚠️ **3. `{{id.error}}` 在节点成功时展开为空字符串**
+
+插值 `{{id.error}}` 在节点 `status: "completed"` 时是 `""`（空串），**不是 `undefined`**。
+
+- 如果你写 `若 {{id.error}} 不为空则…`，LLM 可能理解错空串含义
+- ✅ 推荐：用 `{{id.status}}` 做条件判断（`completed` / `error`），再决定是否读 `{{id.error}}`
+
+### 参数优先级指南
+
+**必须理解**（写错会失败）：
+- `deps`：DAG 依赖声明
+- `needsPrompt`：双向通信语义（60 秒阻塞）
+- `{{id.output}}` / `{{id.error}}` / `{{id.status}}`：插值占位符
+
+**可以省略**（用默认即可）：
+- `model`：省略时用 opencode 配置默认
+- `maxConcurrent`：默认 4
+- `openDashboard` / `dangerouslySkipPermissions`：用 `resolveWorkflowConfig` 自动处理
+
+**几乎不需要**：
+- `baseUrl`：本地调试才用
+- `worktree`：仅 coding workflow 需要（改同文件的场景）
+
 ## 两种使用方式
 
 ### 方式 A：使用预定义 workflow 模板（推荐起步）
@@ -149,7 +238,7 @@ const wf = await createWorkflow({
 | `wf.agent(type, prompt, opts?)` | 运行单个 agent。返回 `{ id, status, output, durationMs }` 或 `{ id, status, error, durationMs }` |
 | `wf.parallel(specs)` | 并行运行多个 agent。specs: `[{ type, prompt, id?, model? }]`。返回结果数组，顺序与 specs 一致 |
 | `wf.dag(nodeSpecs)` | DAG 编排：自动拓扑分层，层内并发，下游可用 `{{id.output}}` 插值上游输出。返回 `{ id: result }` 对象 |
-| `wf.needPrompt(id, spec?)` | 双向通信：输出 `[workflow:need_prompt]` 事件，阻塞等待主 agent 写 `{commandsDir}/agent_prompt_{id}.json`，返回 prompt 字符串 |
+| `wf.needPrompt(id, spec?)` | 双向通信：输出 `[workflow:need_agent]` 事件（**注意**：事件 type 是 `need_agent`，不是 `need_prompt`），阻塞等待主 agent 写 `{commandsDir}/agent_prompt_{id}.json`，返回 prompt 字符串 |
 | `wf.readPrompt(id)` | 同步读已存在的 prompt，不存在返回 null |
 | `wf.status()` | 读取当前 IPC 状态 |
 | `wf.dashboardPath` | dashboard HTML 文件路径 |
@@ -237,7 +326,7 @@ const results = await wf.dag([
 ```javascript
 // workflow 声明需要 prompt，主 agent 注入
 const promptA = await wf.needPrompt("task-A", { type: "coder", deps: ["phase-1"] })
-// stdout 输出: [workflow:need_prompt] {"id":"task-A","spec":{"type":"coder","deps":["phase-1"]}}
+// stdout 输出: [workflow:need_agent] {"id":"task-A","spec":{"type":"coder","deps":["phase-1"]}}
 // 阻塞等待主 agent 写入 {commandsDir}/agent_prompt_task-A.json
 // 返回 prompt 字符串
 
@@ -246,7 +335,7 @@ const result = await wf.agent("coder", promptA, { id: "task-A" })
 
 **主 agent 侧操作：**
 ```bash
-# 监听 stdout 的 [workflow:need_prompt] 事件
+# 监听 stdout 的 [workflow:need_agent] 事件
 # 构造 prompt 后写入：
 echo '{"prompt": "你的任务描述..."}' > .workflow/commands/agent_prompt_task-A.json
 ```
