@@ -131,4 +131,19 @@ describe("merge-gate.createWorktreeApi", () => {
     assert.ok(!commitMsg.includes(";"), "commit should not contain semicolon")
     assert.ok(commitMsg.includes("bad_id_rm_-rf"), `expected sanitized ID, got: ${commitMsg}`)
   })
+
+  it("mergeAccumulator uses defaultExec when no exec injected", async () => {
+    const { createWorktreeApi } = await import("../lib/merge-gate.mjs")
+    const api = createWorktreeApi({ repoDir: "/nonexistent", baseBranch: "main" })
+
+    try {
+      await api.mergeAccumulator("/nonexistent/.workflow/accumulator", "main")
+      assert.fail("should have thrown (no git repo)")
+    } catch (err) {
+      assert.ok(
+        !err.message.includes("exec is not a function"),
+        `should not crash with "exec is not a function", got: ${err.message}`
+      )
+    }
+  })
 })

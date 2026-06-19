@@ -620,6 +620,67 @@ describe("wf.dag() with per-node worktrees", () => {
     wf.shutdown()
   })
 
+  it("creates layer-N+1 worktrees from accumulator branch so they see consolidated changes", { timeout: 15000 }, async () => {
+    const mockClient = {
+      global: { health: async () => ({ data: { healthy: true } }) },
+      session: {
+        list: async () => ({ data: [] }),
+        create: async () => ({ data: { id: `s-${Math.random()}` } }),
+        prompt: async (opts) => {
+          return { data: { parts: [{ type: "text", text: "ok" }] } }
+        },
+      },
+    }
+    const mockIpc = createMockIpc()
+
+    const worktreeEvents = []
+    const mockWorktreeApi = {
+      createNode: async (repoDir, nodeId, baseBranch) => {
+        worktreeEvents.push({ op: "createNode", nodeId, baseBranch })
+        return { path: `/repo/.workflow/wt-${nodeId}`, branch: `wf-${nodeId}`, repoDir }
+      },
+      consolidate: async (nodeDirs, accumulatorDir) => {
+        worktreeEvents.push({ op: "consolidate" })
+        return { merged: nodeDirs.map(d => d.split("/").pop()), conflicts: [] }
+      },
+      removeNode: async (nodeDir) => {
+        worktreeEvents.push({ op: "removeNode" })
+      },
+      ensureAccumulator: async (repoDir, baseBranch) => {
+        worktreeEvents.push({ op: "ensureAccumulator" })
+        return "/repo/.workflow/accumulator"
+      },
+    }
+
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+      worktree: { enable: true, repoDir: "/repo", baseBranch: "main" },
+      _worktreeApi: mockWorktreeApi,
+    })
+
+    await wf.dag([
+      { id: "A", type: "general", prompt: "Task A", deps: [] },
+      { id: "B", type: "general", prompt: "Task B", deps: [] },
+      { id: "C", type: "general", prompt: "Task C", deps: ["A", "B"] },
+    ])
+
+    const creates = worktreeEvents.filter(e => e.op === "createNode")
+    assert.equal(creates.length, 3)
+
+    const aCreate = creates.find(e => e.nodeId === "A")
+    const bCreate = creates.find(e => e.nodeId === "B")
+    const cCreate = creates.find(e => e.nodeId === "C")
+
+    assert.equal(aCreate.baseBranch, "main", "layer 1 node A created from baseBranch")
+    assert.equal(bCreate.baseBranch, "main", "layer 1 node B created from baseBranch")
+    assert.equal(cCreate.baseBranch, "main-acc", "layer 2 node C created from accumulator branch to see layer 1 changes")
+
+    wf.shutdown()
+  })
+
   it("dag node with needsPrompt:true polls command file for injected prompt", { timeout: 15000 }, async () => {
     const promptCalls = []
     const mockClient = {

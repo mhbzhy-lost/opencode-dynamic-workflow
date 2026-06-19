@@ -146,6 +146,7 @@ describe("e2e: auto-serve", () => {
 
       const wf = await createWorkflow({
         workdir,
+        openDashboard: false,
         // no baseUrl → auto-starts server
       })
 
@@ -205,6 +206,7 @@ describe("e2e: explicit baseUrl via opencode serve", () => {
       const wf = await createWorkflow({
         workdir,
         baseUrl: server.baseUrl,
+        openDashboard: false,
       })
 
       const result = await wf.agent(
@@ -243,6 +245,7 @@ describe("e2e: explicit baseUrl via opencode serve", () => {
         workdir: workdir2,
         baseUrl: server.baseUrl,
         maxConcurrent: 2,
+        openDashboard: false,
       })
 
       const results = await wf.parallel([
@@ -310,6 +313,7 @@ describe("e2e: workflow script", () => {
         scriptPath,
         [
           "--skip-permissions",
+          "--no-dashboard",
           "--base-url", server.baseUrl,
           "1+1等于几？只回答数字",
         ],
@@ -319,14 +323,14 @@ describe("e2e: workflow script", () => {
       // ── 脚本退出码 ──
       assert.equal(code, 0, `script exited with code ${code}.\nstderr: ${stderr}`)
 
-      // ── stderr 包含 dashboard 提示 ──
+      // ── stderr 包含 dashboard.html 已生成提示（不打开） ──
       assert.ok(
         stderr.includes("实时进度面板已就绪"),
-        `stderr should contain dashboard hint. Got: ${stderr.slice(0, 300)}`
+        `stderr should contain dashboard-file-ready hint. Got: ${stderr.slice(0, 300)}`
       )
       assert.ok(
-        stderr.includes("open "),
-        `stderr should contain 'open' command for dashboard`
+        !stderr.includes("open "),
+        `stderr should NOT contain 'open' — dashboard must not be auto-opened in tests. Got: ${stderr.slice(0, 300)}`
       )
 
       // ── stdout 是合法 JSON 结果 ──

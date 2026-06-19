@@ -346,6 +346,29 @@ describe("worktree.consolidatePhase", () => {
     assert.equal(result.conflicts[0].workstream, "wt-B")
     assert.ok(result.conflicts[0].message.includes("CONFLICT"))
   })
+
+  it("includes --allow-empty so commit succeeds even when staging area is empty", async () => {
+    const calls = []
+    const exec = (cmd, args) => {
+      calls.push([cmd, args.join ? args.join(" ") : args])
+      return Promise.resolve("")
+    }
+
+    const { consolidatePhase } = await import("../lib/worktree.mjs")
+    await consolidatePhase(
+      ["/repo/.workflow/wt-A"],
+      "/repo/.workflow/accumulator",
+      1,
+      { exec, accBranch: "main-acc" }
+    )
+
+    const commitCall = calls.find(([, a]) => a.includes("commit") && !a.includes("merge"))
+    assert.ok(commitCall, "commit call should exist")
+    assert.ok(
+      commitCall[1].includes("--allow-empty"),
+      `commit should include --allow-empty flag, got: ${commitCall[1]}`
+    )
+  })
 })
 
 // ---------------------------------------------------------------------------

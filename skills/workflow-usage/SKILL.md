@@ -252,10 +252,26 @@ const wf = await createWorkflow({
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `type` | string | agent 类型：`"explore"` / `"general"` |
+| `type` | string | **仅工作流角色标签**（`"general"` / `"explore"` / `"coder"` 等），用于 IPC 状态、dashboard 显示与 session 标题。**不**传给 opencode 作为 agent 标识。实际执行时 opencode 使用其默认 agent（`build`）。仅当 `type` 恰好等于 opencode 内置 agent 名（目前 `"build"` / `"plan"`）时，引擎才会原样转发 |
 | `prompt` | string | 任务 prompt |
 | `id` | string? | 自定义 agent ID（省略则自动生成） |
 | `model` | string? | 覆盖 workflow 级别的 model |
+
+> ⚠️ **`type` ≠ opencode agent**
+>
+> opencode 内置只有两个可执行 agent：`build`（默认，通用编码）和 `plan`（只读规划）。
+> `"general"` / `"explore"` / `"coder"` 是**工作流侧的角色标签**，用来在 status.json、
+> dashboard、session 标题里区分"这个 agent 跑的是哪类任务"。把它们当成 opencode
+> agent 名字透传会让 server 在 `createUserMessage` 阶段抛 `UnknownError`，导致 prompt
+> 瞬间返回且 output 为空（2026-06-18 P0 bug，详见 `docs/bugs/bug-subagent-empty-prompt.md`）。
+>
+> 规则：
+> - **99% 的场景直接写 `"general"` / `"explore"` / `"coder"`**，引擎会剥离它、使用 opencode
+>   默认的 `build` agent 执行。
+> - 只有确实需要 plan-only（只产方案不动代码）时才用 `type: "plan"`，此时引擎直接透传
+>   给 opencode。
+> - 不要自定义新 agent 名字（如 `"researcher"`、`"reviewer"`）并期望 opencode 解析——
+>   它会变成未知 agent 被拒绝。自定义语义用 prompt 表达即可。
 
 #### model 指定规则
 
@@ -316,7 +332,7 @@ const results = await wf.dag([
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `id` | string | 唯一节点 ID |
-| `type` | string? | agent 类型（默认 `"general"`） |
+| `type` | string? | 工作流角色标签（默认 `"general"`）。**不**透传给 opencode，仅用于 status/dashboard/session 标题。透传规则见上文"`type` ≠ opencode agent" |
 | `prompt` | string | 任务 prompt，支持 `{{dep.output}}` 插值。与 `needsPrompt` 互斥 |
 | `needsPrompt` | boolean? | 为 `true` 时省略 prompt，emit `need_agent` 事件等主 agent 注入 |
 | `deps` | string[] | 依赖的节点 ID 列表 |
