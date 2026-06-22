@@ -11,6 +11,13 @@ describe("EVENTS", () => {
     assert.equal(EVENTS.PHASE_END, "phase_end")
     assert.equal(EVENTS.COMPLETED, "completed")
   })
+
+  it("defines atom pool lifecycle events", () => {
+    assert.equal(EVENTS.TASK_READY, "task_ready")
+    assert.equal(EVENTS.TASK_PROMOTED, "task_promoted")
+    assert.equal(EVENTS.ATOM_RECYCLED, "atom_recycled")
+    assert.equal(EVENTS.ATOM_REUSED, "atom_reused")
+  })
 })
 
 describe("emitEvent", () => {
@@ -51,5 +58,25 @@ describe("emitEvent", () => {
   it("outputs correct prefix for completed", () => {
     emitEvent(EVENTS.COMPLETED, { ok: true })
     assert.equal(writes[0], '[workflow:completed] {"ok":true}\n')
+  })
+
+  it("outputs correct prefix for task_ready", () => {
+    emitEvent(EVENTS.TASK_READY, { taskId: "X", deps: ["A", "B"] })
+    assert.equal(writes[0], '[workflow:task_ready] {"taskId":"X","deps":["A","B"]}\n')
+  })
+
+  it("outputs correct prefix for task_promoted", () => {
+    emitEvent(EVENTS.TASK_PROMOTED, { taskId: "X", atom: "atom-0" })
+    assert.equal(writes[0], '[workflow:task_promoted] {"taskId":"X","atom":"atom-0"}\n')
+  })
+
+  it("outputs correct prefix for atom_recycled", () => {
+    emitEvent(EVENTS.ATOM_RECYCLED, { atom: "atom-1" })
+    assert.equal(writes[0], '[workflow:atom_recycled] {"atom":"atom-1"}\n')
+  })
+
+  it("outputs correct prefix for atom_reused", () => {
+    emitEvent(EVENTS.ATOM_REUSED, { atom: "atom-1", newTask: "Y" })
+    assert.equal(writes[0], '[workflow:atom_reused] {"atom":"atom-1","newTask":"Y"}\n')
   })
 })

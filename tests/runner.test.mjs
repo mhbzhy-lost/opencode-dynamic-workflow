@@ -539,6 +539,277 @@ describe("wf.dag()", () => {
   })
 })
 // ---------------------------------------------------------------------------
+describe("wf.dag() terminalNodes", () => {
+  let tmpdir, mkdtempSync, rmSync, execSync, join, existsSync
+  before(async () => {
+    const os = await import("node:os")
+    const fs = await import("node:fs")
+    const path = await import("node:path")
+    const child = await import("node:child_process")
+    tmpdir = os.tmpdir
+    mkdtempSync = fs.mkdtempSync
+    rmSync = fs.rmSync
+    existsSync = fs.existsSync
+    join = path.join
+    execSync = child.execSync
+  })
+
+  function createMockClientAndIpc() {
+    const mockClient = {
+      global: { health: async () => ({ data: { healthy: true } }) },
+      session: {
+        list: async () => ({ data: [] }),
+        create: async () => ({ data: { id: `s-${Math.random()}` } }),
+        prompt: async () => ({ data: { parts: [{ type: "text", text: "ok" }] } }),
+      },
+    }
+    const ipcDir = mkdtempSync(join(tmpdir(), "ipc-"))
+    const mockIpc = {
+      advancePhase: () => {},
+      emitEvent: () => {},
+      updateAgentStatus: () => {},
+      updateState: () => {},
+      readStatus: () => ({}),
+      writeResult: () => {},
+      commandsDir: ipcDir,
+    }
+    return { mockClient, mockIpc, ipcDir }
+  }
+
+  it("dag() returns node IDs as enumerable keys; terminalNodes/mergeInstructions are non-enumerable", { timeout: 10000 }, async () => {
+    const { mockClient, mockIpc, ipcDir } = createMockClientAndIpc()
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+    })
+
+    const results = await wf.dag([
+      { id: "a", type: "coder", prompt: "A", deps: [] },
+      { id: "b", type: "coder", prompt: "B", deps: ["a"] },
+    ])
+
+    assert.deepEqual(Object.keys(results).sort(), ["a", "b"], "only node IDs should be enumerable")
+    assert.equal(results.terminalNodes.length, 0, "no terminalNodes without worktree config (no atoms)")
+    assert.equal(typeof results.mergeInstructions, "function")
+    assert.equal(results.mergeInstructions(), "No terminal nodes to merge.")
+
+    wf.shutdown()
+    rmSync(ipcDir, { recursive: true, force: true })
+  })
+
+  it("terminalNodes contains branch and atomPath when worktree config is set", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "wf-termnodes-"))
+    execSync("git init -b main", { cwd: repoDir, stdio: "ignore" })
+    execSync("git config user.email test@test.com", { cwd: repoDir, stdio: "ignore" })
+    execSync("git config user.name Test", { cwd: repoDir, stdio: "ignore" })
+    execSync("echo init > README && git add . && git commit -m init", {
+      cwd: repoDir, stdio: "ignore",
+    })
+
+    const mockClient = {
+      global: { health: async () => ({ data: { healthy: true } }) },
+      session: {
+        list: async () => ({ data: [] }),
+        create: async () => ({ data: { id: "s-1" } }),
+        prompt: async () => ({ data: { parts: [{ type: "text", text: "ok" }] } }),
+      },
+    }
+    const ipcDir = mkdtempSync(join(tmpdir(), "ipc-term-"))
+    const mockIpc = {
+      advancePhase: () => {}, emitEvent: () => {}, updateAgentStatus: () => {},
+      updateState: () => {}, readStatus: () => ({}), writeResult: () => {},
+      commandsDir: ipcDir,
+    }
+
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+      repoDir,
+      worktree: { enable: true, baseBranch: "main" },
+    })
+
+    const results = await wf.dag([
+      { id: "B", type: "coder", prompt: "do B", deps: [] },
+    ])
+
+    const nodes = results.terminalNodes
+    assert.equal(nodes.length, 1, "B is the only terminal node")
+    assert.equal(nodes[0].id, "B")
+    assert.ok(nodes[0].branch && nodes[0].branch.startsWith("wf/atom-"), `branch should be wf/atom-*, got: ${nodes[0].branch}`)
+    assert.ok(nodes[0].atomPath && nodes[0].atomPath.includes(".workflow/worktrees"), `atomPath should be in .workflow/worktrees, got: ${nodes[0].atomPath}`)
+    assert.ok(nodes[0].commands.length > 0, "should have merge commands")
+    assert.ok(nodes[0].commands.some(c => c.includes("git") && c.includes("merge")), "merge commands should include git merge")
+
+    const instructions = results.mergeInstructions()
+    assert.ok(instructions.includes(nodes[0].branch), "instructions should mention atom branch")
+    assert.ok(instructions.includes("B"), "instructions should mention node id")
+
+    wf.shutdown()
+    rmSync(repoDir, { recursive: true, force: true })
+    rmSync(ipcDir, { recursive: true, force: true })
+  })
+
+  it("terminalNodes excludes non-terminal nodes (nodes with dependents)", { timeout: 10000 }, async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "wf-noterm-"))
+    execSync("git init -b main", { cwd: repoDir, stdio: "ignore" })
+    execSync("git config user.email test@test.com", { cwd: repoDir, stdio: "ignore" })
+    execSync("git config user.name Test", { cwd: repoDir, stdio: "ignore" })
+    execSync("echo init > README && git add . && git commit -m init", {
+      cwd: repoDir, stdio: "ignore",
+    })
+
+    const mockClient = {
+      global: { health: async () => ({ data: { healthy: true } }) },
+      session: {
+        list: async () => ({ data: [] }),
+        create: async () => ({ data: { id: "s-1" } }),
+        prompt: async () => ({ data: { parts: [{ type: "text", text: "ok" }] } }),
+      },
+    }
+    const ipcDir = mkdtempSync(join(tmpdir(), "ipc-noterm-"))
+    const mockIpc = {
+      advancePhase: () => {}, emitEvent: () => {}, updateAgentStatus: () => {},
+      updateState: () => {}, readStatus: () => ({}), writeResult: () => {},
+      commandsDir: ipcDir,
+    }
+
+    const { createWorkflow } = await import("../lib/runner.mjs")
+
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+      repoDir,
+      worktree: { enable: true, baseBranch: "main" },
+    })
+
+    const results = await wf.dag([
+      { id: "root", type: "coder", prompt: "root", deps: [] },
+      { id: "leaf", type: "coder", prompt: "leaf", deps: ["root"] },
+    ])
+
+    const termIds = results.terminalNodes.map(n => n.id)
+    assert.ok(!termIds.includes("root"), "root should NOT be terminal (leaf depends on it)")
+    assert.ok(termIds.includes("leaf"), "leaf should be terminal")
+
+    wf.shutdown()
+    rmSync(repoDir, { recursive: true, force: true })
+    rmSync(ipcDir, { recursive: true, force: true })
+  })
+})
+// ---------------------------------------------------------------------------
+describe("wf.needMerge callback", () => {
+
+  it("wf.needMerge is invoked when multi-dep node requires merge", async () => {
+    const mergeCalls = []
+    const mockClient = {
+      global: { health: async () => ({ data: { healthy: true } }) },
+      session: {
+        list: async () => ({ data: [] }),
+        create: async () => ({ data: { id: `s-${Math.random()}` } }),
+        prompt: async () => ({ data: { parts: [{ type: "text", text: "ok" }] } }),
+      },
+    }
+    const mockIpc = createMockIpc()
+    const targetAtom = { cwd: "/mock/target-atom", pid: 99, branch: "wf/D", process: { killed: false } }
+    const mockAtomPool = {
+      acquire: async () => targetAtom,
+      fork: async (branch) => ({ cwd: `/mock/${branch}`, pid: Math.floor(Math.random() * 10000), branch, process: { killed: false } }),
+      merge: async () => {},
+      recycleAtom: async () => {},
+      release: () => {},
+    }
+
+    const { createWorkflow } = await import("../lib/runner.mjs")
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+      _mockAtomPool: mockAtomPool,
+      worktree: { enable: true },
+    })
+
+    wf.needMerge = async ({ nodeId, sourceNode, targetAtom }) => {
+      mergeCalls.push({ nodeId, sourceId: sourceNode.id })
+      return { success: true }
+    }
+
+    const results = await wf.dag([
+      { id: "A", type: "coder", prompt: "A", deps: [] },
+      { id: "B", type: "coder", prompt: "B", deps: ["A"] },
+      { id: "C", type: "coder", prompt: "C", deps: ["A"] },
+      { id: "D", type: "coder", prompt: "D", deps: ["B", "C"] },
+    ])
+
+    assert.ok(mergeCalls.length >= 1, `expected at least 1 merge call, got ${mergeCalls.length}`)
+    assert.ok(mergeCalls.some(c => c.nodeId === "D"), "D should have triggered a merge call")
+    assert.equal(results.D.status, "completed", "D should complete after merge")
+
+    wf.shutdown()
+  })
+
+  it("wf.needMerge rejection marks node as failed", async () => {
+    const mockClient = {
+      global: { health: async () => ({ data: { healthy: true } }) },
+      session: {
+        list: async () => ({ data: [] }),
+        create: async () => ({ data: { id: `s-${Math.random()}` } }),
+        prompt: async () => ({ data: { parts: [{ type: "text", text: "ok" }] } }),
+      },
+    }
+    const mockIpc = createMockIpc()
+    const mockAtomPool = {
+      acquire: async () => ({ cwd: "/mock/target", pid: 99, branch: "wf/D", process: { killed: false } }),
+      fork: async (branch) => ({ cwd: `/mock/${branch}`, pid: Math.floor(Math.random() * 10000), branch, process: { killed: false } }),
+      merge: async () => {},
+      recycleAtom: async () => {},
+      release: () => {},
+    }
+
+    const { createWorkflow } = await import("../lib/runner.mjs")
+    const wf = await createWorkflow({
+      _mockClient: mockClient,
+      _mockIpc: mockIpc,
+      _mockAtomPool: mockAtomPool,
+      worktree: { enable: true },
+    })
+
+    wf.needMerge = async ({ nodeId }) => {
+      if (nodeId === "D") throw new Error("CONFLICT file.txt")
+      return { success: true }
+    }
+
+    const results = await wf.dag([
+      { id: "A", type: "coder", prompt: "A", deps: [] },
+      { id: "B", type: "coder", prompt: "B", deps: ["A"] },
+      { id: "C", type: "coder", prompt: "C", deps: ["A"] },
+      { id: "D", type: "coder", prompt: "D", deps: ["B", "C"] },
+    ])
+
+    assert.ok(!results.D || results.D.status === "merge-conflict" || !("D" in results),
+      "D should not be completed when merge fails")
+    assert.equal(results.A.status, "completed", "A should still complete")
+    assert.equal(results.B.status, "completed", "B should still complete")
+    assert.equal(results.C.status, "completed", "C should still complete")
+
+    wf.shutdown()
+  })
+
+  it("wf.mergeComplete returns the result passed to it", async () => {
+    const { createWorkflow } = await import("../lib/runner.mjs")
+    const mockClient = {
+      global: { health: async () => ({ data: { healthy: true } }) },
+      session: { list: async () => ({ data: [] }), create: async () => ({ data: { id: "s-1" } }), prompt: async () => ({ data: { parts: [] } }) },
+    }
+    const wf = await createWorkflow({ _mockClient: mockClient, _mockIpc: createMockIpc() })
+    const result = { success: true, merged: ["wf/X"] }
+    assert.deepEqual(wf.mergeComplete("X", result), result)
+    wf.shutdown()
+  })
+})
+// ---------------------------------------------------------------------------
 describe("wf.dag() with per-node worktrees", () => {
   it("dag node with needsPrompt:true polls command file for injected prompt", { timeout: 15000 }, async () => {
     const promptCalls = []

@@ -415,3 +415,201 @@ describe("worktree.removeAccumulator", () => {
     assert.deepEqual(rmCall[1], ["-rf", "/repo/.workflow/accumulator"])
   })
 })
+
+// ---------------------------------------------------------------------------
+// worktree.recycleAtom — clean atom before returning to idle pool
+// ---------------------------------------------------------------------------
+describe("worktree.recycleAtom", () => {
+  it("stages, commits, detaches, and cleans atom", async () => {
+    const calls = []
+    const exec = (cmd, args) => {
+      calls.push([cmd, args])
+      return Promise.resolve("")
+    }
+
+    const { recycleAtom } = await import("../lib/worktree.mjs")
+    await recycleAtom({
+      atomPath: "/repo/.workflow/atom-1",
+      exec,
+    })
+
+    // Should stage all changes
+    const addCall = calls.find(([, a]) => a.includes("add") && a.includes("-A"))
+    assert.ok(addCall, "should call git add -A")
+    assert.deepEqual(addCall[1], ["-C", "/repo/.workflow/atom-1", "add", "-A"])
+
+    // Should commit with --allow-empty
+    const commitCall = calls.find(([, a]) => a.includes("commit"))
+    assert.ok(commitCall, "should call git commit")
+    assert.ok(commitCall[1].includes("--allow-empty"), "commit should include --allow-empty")
+    assert.deepEqual(commitCall[1], [
+      "-C", "/repo/.workflow/atom-1",
+      "commit", "--allow-empty", "-m", "recycle: atom cleanup"
+    ])
+
+    // Should detach HEAD
+    const detachCall = calls.find(([, a]) => a.includes("checkout") && a.includes("--detach"))
+    assert.ok(detachCall, "should call git checkout --detach")
+    assert.deepEqual(detachCall[1], ["-C", "/repo/.workflow/atom-1", "checkout", "--detach"])
+
+    // Should clean working directory
+    const cleanCall = calls.find(([, a]) => a.includes("clean"))
+    assert.ok(cleanCall, "should call git clean")
+    assert.deepEqual(cleanCall[1], ["-C", "/repo/.workflow/atom-1", "clean", "-fdx"])
+  })
+
+  it("continues cleanup even when commit fails", async () => {
+    const calls = []
+    const exec = (cmd, args) => {
+      calls.push([cmd, args])
+      if (args.includes("commit")) return Promise.reject(new Error("nothing to commit"))
+      return Promise.resolve("")
+    }
+
+    const { recycleAtom } = await import("../lib/worktree.mjs")
+    await recycleAtom({
+      atomPath: "/repo/.workflow/atom-2",
+      exec,
+    })
+
+    // Should still detach and clean even if commit failed
+    const detachCall = calls.find(([, a]) => a.includes("checkout") && a.includes("--detach"))
+    assert.ok(detachCall, "should still detach HEAD")
+
+    const cleanCall = calls.find(([, a]) => a.includes("clean"))
+    assert.ok(cleanCall, "should still clean working directory")
+  })
+
+  it("uses provided commit message", async () => {
+    const calls = []
+    const exec = (cmd, args) => {
+      calls.push([cmd, args])
+      return Promise.resolve("")
+    }
+
+    const { recycleAtom } = await import("../lib/worktree.mjs")
+    await recycleAtom({
+      atomPath: "/repo/.workflow/atom-3",
+      commitMessage: "task-001: completed",
+      exec,
+    })
+
+    const commitCall = calls.find(([, a]) => a.includes("commit"))
+    assert.ok(commitCall[1].includes("task-001: completed"), "should use provided commit message")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// worktree.reset — switch atom to target state for reuse
+// ---------------------------------------------------------------------------
+describe("worktree.reset", () => {
+  it("checks out existing branch when targetState is branch name", async () => {
+    const calls = []
+    const exec = (cmd, args) => {
+      calls.push([cmd, args])
+      return Promise.resolve("")
+    }
+
+    const { reset } = await import("../lib/worktree.mjs")
+    await reset({
+      atomPath: "/repo/.workflow/atom-1",
+      targetState: "wf-task-001",
+      exec,
+    })
+
+    // Should checkout the branch
+    const checkoutCall = calls.find(([, a]) => a.includes("checkout") && !a.includes("-b"))
+    assert.ok(checkoutCall, "should call git checkout")
+    assert.deepEqual(checkoutCall[1], ["-C", "/repo/.workflow/atom-1", "checkout", "wf-task-001"])
+
+    // Should clean working directory
+    const cleanCall = calls.find(([, a]) => a.includes("clean"))
+    assert.ok(cleanCall, "should call git clean")
+    assert.deepEqual(cleanCall[1], ["-C", "/repo/.workflow/atom-1", "clean", "-fdx"])
+  })
+
+  it("checks out commit SHA then creates new branch", async () => {
+    const calls = []
+    const exec = (cmd, args) => {
+      calls.push([cmd, args])
+      return Promise.resolve("")
+    }
+
+    const { reset } = await import("../lib/worktree.mjs")
+    await reset({
+      atomPath: "/repo/.workflow/atom-2",
+      targetState: "abc123def456",  // commit SHA
+      newBranch: "wf-task-002",
+      exec,
+    })
+
+    // Should checkout the commit (detached HEAD)
+    const checkoutCommit = calls.find(([, a]) => 
+      a.includes("checkout") && a.includes("abc123def456") && !a.includes("-b")
+    )
+    assert.ok(checkoutCommit, "should checkout commit SHA")
+    assert.deepEqual(checkoutCommit[1], ["-C", "/repo/.workflow/atom-2", "checkout", "abc123def456"])
+
+    // Should create new branch from that commit
+    const createBranch = calls.find(([, a]) => a.includes("checkout") && a.includes("-b"))
+    assert.ok(createBranch, "should create new branch")
+    assert.deepEqual(createBranch[1], ["-C", "/repo/.workflow/atom-2", "checkout", "-b", "wf-task-002"])
+
+    // Should clean working directory
+    const cleanCall = calls.find(([, a]) => a.includes("clean"))
+    assert.ok(cleanCall, "should call git clean")
+  })
+
+  it("resets to baseBranch when no targetState provided", async () => {
+    const calls = []
+    const exec = (cmd, args) => {
+      calls.push([cmd, args])
+      return Promise.resolve("")
+    }
+
+    const { reset } = await import("../lib/worktree.mjs")
+    await reset({
+      atomPath: "/repo/.workflow/atom-3",
+      baseBranch: "main",
+      exec,
+    })
+
+    const checkoutCall = calls.find(([, a]) => a.includes("checkout") && !a.includes("-b"))
+    assert.ok(checkoutCall, "should call git checkout")
+    assert.deepEqual(checkoutCall[1], ["-C", "/repo/.workflow/atom-3", "checkout", "main"])
+  })
+
+  it("validates branch names before checkout", async () => {
+    const exec = () => Promise.resolve("")
+    const { reset } = await import("../lib/worktree.mjs")
+
+    await assert.rejects(
+      () => reset({
+        atomPath: "/repo/.workflow/atom-4",
+        newBranch: "--invalid",
+        exec,
+      }),
+      /invalid branch name/
+    )
+  })
+
+  it("cleans working directory even when checkout fails", async () => {
+    const calls = []
+    const exec = (cmd, args) => {
+      calls.push([cmd, args])
+      if (args.includes("checkout")) return Promise.reject(new Error("pathspec did not match"))
+      return Promise.resolve("")
+    }
+
+    const { reset } = await import("../lib/worktree.mjs")
+    await reset({
+      atomPath: "/repo/.workflow/atom-5",
+      targetState: "nonexistent-branch",
+      exec,
+    })
+
+    // Should still clean even if checkout failed
+    const cleanCall = calls.find(([, a]) => a.includes("clean"))
+    assert.ok(cleanCall, "should call git clean even when checkout fails")
+  })
+})

@@ -211,8 +211,8 @@ const wf = await createWorkflow({
     enable: boolean,
     repoDir: string,        // git 仓库路径
     baseBranch: string,     // 基准分支，默认 "main"
-    branch: string?,        // 指定时走 legacy single-worktree；省略时用 per-node worktrees
     autoMerge: boolean?,    // 为 true 时 shutdown 自动 merge accumulator 到 baseBranch
+    poolStrategy: 'keep' | 'cleanup',  // idle pool 管理策略（默认 'keep'）
     exec: function?,        // 注入的 exec 函数（测试用）
   },
   dangerouslySkipPermissions: boolean,
@@ -220,18 +220,18 @@ const wf = await createWorkflow({
 ```
 
 **worktree 行为说明：**
-- `enable: true` 且未指定 `branch` 时，自动使用 **per-node worktrees + accumulator**：
-  - 每个 DAG 节点创建独立 worktree（`merge-gate.createNode`）
-  - 每层完成后 consolidate 到 accumulator，移除节点 worktree
-  - DAG 结束后 accumulator 包含所有层的累积结果
-- `enable: true` 且指定 `branch` 时，走 **legacy single-worktree**（所有 agent 共享 1 个 worktree）
+- `enable: true` 时使用 **atom pool + accumulator worktree promotion**：
+  - 每个 atom 是一个 worktree + 常驻 worker 进程的原子整体
+  - worker 进程的 CWD 绑定到 worktree 路径，Bash 命令天然在正确目录执行
+  - DAG 任务就绪时立即晋升（promote），通过 ref 计数管理 atom 复用
+  - 任务完成后 atom 回收到 idle pool，等待下次晋升时 reuse
 - `autoMerge: true` 时 shutdown 自动将 accumulator merge 到 baseBranch（冲突时抛异常）
-- 默认 `autoMerge: false`，shutdown 后保留 worktree 与 accumulator 分支，主 agent 手动 merge
+- 默认 `autoMerge: false`，shutdown 后保留 accumulator 分支，主 agent 手动 merge
 
 **coding workflow 并发策略：**
-- agent 改不同文件 → DAG 同层无 deps，自动并行
+- agent 改不同文件 → DAG 同层无 deps，自动并行（每个 agent 在独立 atom 操作）
 - agent 改同一文件 → 必须通过 `deps` 串行编排（层间顺序由 DAG 拓扑决定）
-- 当 DAG 同层 agent 改不同文件时，单 worktree 下的 git 可以干净合并；如果需要真并行（每个 agent 独立工作目录），参考 `worktree.mjs` 的 accumulator API 自行编排
+- atom pool 自动管理：优先 reuse idle atom，池空时才创建新 atom
 
 **返回对象：**
 
@@ -245,7 +245,7 @@ const wf = await createWorkflow({
 | `wf.status()` | 读取当前 IPC 状态 |
 | `wf.dashboardPath` | dashboard HTML 文件路径 |
 | `wf.snapshot` | 恢复的快照数据（未恢复则 null） |
-| `wf.worktree` | worktree 状态（`{ path, branch, repoDir, baseBranch }`），未启用或未创建时为 undefined |
+
 | `wf.shutdown()` | 清理：停止命令循环、写结果（含 worktree 信息）、关闭自动启动的 server。**返回 Promise**，必须 `await` 以确保 `autoMerge` 完成 |
 
 **agent spec 字段：**

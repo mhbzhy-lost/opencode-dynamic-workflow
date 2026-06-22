@@ -1,7 +1,7 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
-import { createDAG, topoSort, detectCycles, layers, readyNodes, getNode } from "../lib/dag.mjs"
+import { createDAG, topoSort, detectCycles, layers, readyNodes, getNode, dependents, isReady } from "../lib/dag.mjs"
 
 // ---------------------------------------------------------------------------
 // createDAG
@@ -223,5 +223,72 @@ describe("getNode", () => {
   it("returns undefined for unknown id", () => {
     const dag = createDAG([{ id: "a", deps: [] }])
     assert.equal(getNode(dag, "missing"), undefined)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// dependents
+// ---------------------------------------------------------------------------
+describe("dependents", () => {
+  const dag = () => createDAG([
+    { id: "a", deps: [] },
+    { id: "b", deps: ["a"] },
+    { id: "c", deps: ["a"] },
+    { id: "d", deps: ["b", "c"] },
+    { id: "e", deps: ["d"] },
+  ])
+
+  it("returns empty array for leaf node", () => {
+    assert.deepEqual(dependents(dag(), "e"), [])
+  })
+
+  it("returns direct dependents for node with multiple dependents", () => {
+    const result = dependents(dag(), "a")
+    assert.deepEqual(result.sort(), ["b", "c"])
+  })
+
+  it("returns single dependent for intermediate node", () => {
+    assert.deepEqual(dependents(dag(), "b"), ["d"])
+    assert.deepEqual(dependents(dag(), "c"), ["d"])
+  })
+
+  it("returns empty array for unknown node", () => {
+    assert.deepEqual(dependents(dag(), "missing"), [])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isReady
+// ---------------------------------------------------------------------------
+describe("isReady", () => {
+  const dag = () => createDAG([
+    { id: "a", deps: [] },
+    { id: "b", deps: ["a"] },
+    { id: "c", deps: ["a"] },
+    { id: "d", deps: ["b", "c"] },
+  ])
+
+  it("returns true for root node with empty completed set", () => {
+    assert.equal(isReady(dag(), "a", []), true)
+  })
+
+  it("returns false when dependencies not completed", () => {
+    assert.equal(isReady(dag(), "b", []), false)
+    assert.equal(isReady(dag(), "d", ["a"]), false)
+    assert.equal(isReady(dag(), "d", ["a", "b"]), false)
+  })
+
+  it("returns true when all dependencies completed", () => {
+    assert.equal(isReady(dag(), "b", ["a"]), true)
+    assert.equal(isReady(dag(), "d", ["a", "b", "c"]), true)
+  })
+
+  it("returns false for already completed node", () => {
+    assert.equal(isReady(dag(), "a", ["a"]), false)
+    assert.equal(isReady(dag(), "b", ["a", "b"]), false)
+  })
+
+  it("returns false for unknown node", () => {
+    assert.equal(isReady(dag(), "missing", []), false)
   })
 })
