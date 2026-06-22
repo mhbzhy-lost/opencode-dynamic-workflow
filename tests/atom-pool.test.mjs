@@ -10,12 +10,11 @@
  */
 import { describe, it, before, after, beforeEach } from "node:test"
 import assert from "node:assert/strict"
-import { fork } from "node:child_process"
+import { fork, execSync, execFileSync } from "node:child_process"
 import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { execSync } from "node:child_process"
 import { AtomPool } from "../lib/atom-pool.mjs"
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url))
@@ -215,6 +214,63 @@ describe("atom-pool", () => {
     assert.match(err.message, /reset failure/)
     assert.equal(pool.busyCount, 0, "atom must not leak into busy pool after reset failure")
     assert.equal(pool.idleCount, 1, "atom must be returned to idle pool after reset failure")
+  })
+
+  describe("shell injection prevention", () => {
+    it("merge() uses argv arrays, not shell interpolation, so `$HOME` is treated literally", async () => {
+      // Arrange: create a source branch with a literal `$HOME` in its name.
+      // git allows `$` in branch names; if merge() used shell interpolation
+      // the shell would expand $HOME → /Users/..., making git look for a
+      // branch like `wf-/Users/...` which doesn't exist → error.
+      //
+      // IMPORTANT: test setup uses execFileSync (argv-array) to avoid the
+      // very shell-expansion issue we're testing for.
+      const injectionBranchName = "wf-$HOME"
+      const sourceAtom = {
+        pid: 4001,
+        process: { killed: false },
+        cwd: `${tempRepo}/.workflow/source-inject`,
+      }
+      const targetAtom = {
+        pid: 4002,
+        process: { killed: false },
+        cwd: `${tempRepo}/.workflow/target-inject`,
+      }
+
+      execFileSync("mkdir", ["-p", `${tempRepo}/.workflow`], { stdio: "ignore" })
+      execFileSync(
+        "git",
+        ["worktree", "add", sourceAtom.cwd, "-b", injectionBranchName],
+        { cwd: tempRepo, stdio: "ignore" },
+      )
+      execFileSync(
+        "git",
+        ["worktree", "add", targetAtom.cwd, "-b", "target-inject"],
+        { cwd: tempRepo, stdio: "ignore" },
+      )
+
+      // Sanity: verify the branch really has the literal `$HOME` in it
+      const literalBranchName = execFileSync("git", ["branch", "--show-current"], {
+        cwd: sourceAtom.cwd, encoding: "utf8",
+      }).trim()
+      assert.equal(literalBranchName, injectionBranchName, "branch name must be literal, not shell-expanded")
+
+      // Create a commit on sourceAtom's worktree so merge has something to merge
+      execFileSync("touch", ["injected.txt"], { cwd: sourceAtom.cwd, stdio: "ignore" })
+      execFileSync("git", ["add", "."], { cwd: sourceAtom.cwd, stdio: "ignore" })
+      execFileSync("git", ["commit", "-m", "inject"], { cwd: sourceAtom.cwd, stdio: "ignore" })
+
+      // Act: merge sourceAtom (branch = "wf-$HOME" literal) into targetAtom.
+      // With argv arrays this succeeds; with shell interpolation the $HOME
+      // expands to /Users/... and git fails with "unknown revision wf-/Users/...".
+      await pool.merge(sourceAtom, targetAtom)
+
+      // Assert: target now has the file from source
+      const log = execFileSync("git", ["log", "--oneline", "-5"], {
+        cwd: targetAtom.cwd, encoding: "utf8",
+      })
+      assert.ok(log.includes("inject"), "target atom's log must contain the injected commit")
+    })
   })
 
   it("shutdown() terminates all atoms", async () => {
