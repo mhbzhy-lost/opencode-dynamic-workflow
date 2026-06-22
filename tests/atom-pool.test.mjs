@@ -182,6 +182,41 @@ describe("atom-pool", () => {
     })
   })
 
+  it("returns atom to idle pool when reset fails during acquire", async () => {
+    // Mock _createAtom to avoid real child_process creation.
+    pool._createAtom = async () => ({
+      pid: 9001,
+      cwd: tempRepo,
+      process: { killed: false, send: () => {}, on: () => {}, removeListener: () => {}, kill: () => {} },
+    })
+
+    // Arrange: acquire + release → idle pool has 1 atom; reset is the real IPC path we'll replace
+    const atom = await pool.acquire()
+    pool.release(atom)
+    assert.equal(pool.idleCount, 1)
+    assert.equal(pool.busyCount, 0)
+
+    // Replace reset with one that throws (simulates git checkout failure)
+    const origReset = pool.reset
+    pool.reset = async () => { throw new Error("simulated reset failure") }
+
+    // Act: acquire with a branch triggers reset; reset fails → atom must NOT leak into busy pool
+    let err = null
+    try {
+      await pool.acquire("nonexistent-branch")
+    } catch (e) {
+      err = e
+    } finally {
+      pool.reset = origReset
+    }
+
+    // Assert
+    assert.ok(err, "acquire must propagate reset failure to the caller")
+    assert.match(err.message, /reset failure/)
+    assert.equal(pool.busyCount, 0, "atom must not leak into busy pool after reset failure")
+    assert.equal(pool.idleCount, 1, "atom must be returned to idle pool after reset failure")
+  })
+
   it("shutdown() terminates all atoms", async () => {
     const atom1 = await pool.acquire()
     const atom2 = await pool.acquire()
