@@ -11,13 +11,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, "..")
 const SCRIPT = join(ROOT, "install-opencode.sh")
 
-function install(configDir, fakeZshrc) {
+function install(configDir, agentsSkillsDir, fakeZshrc) {
   return execFileSync("bash", [SCRIPT], {
     cwd: ROOT,
     encoding: "utf8",
     env: {
       ...process.env,
       OPENCODE_CONFIG_DIR: configDir,
+      AGENTS_SKILLS_DIR: agentsSkillsDir,
       ZSHRC: fakeZshrc,
       NODE_BIN: "node",
     },
@@ -26,46 +27,52 @@ function install(configDir, fakeZshrc) {
 }
 
 describe("install-opencode.sh", () => {
-  it("skill 软链指向 submodule skills/workflow-usage", () => {
+  it("skill 软链指向共享 ~/.agents/skills/workflow-usage", () => {
     const tmp = mkdtempSync(join(tmpdir(), "install-test-"))
+    const skillsDir = mkdtempSync(join(tmpdir(), "install-agents-skills-"))
     const home = mkdtempSync(join(tmpdir(), "install-home-"))
     const fakeZshrc = join(home, ".zshrc")
     try {
-      install(tmp, fakeZshrc)
-      const link = join(tmp, "skills", "workflow-usage")
+      install(tmp, skillsDir, fakeZshrc)
+      const link = join(skillsDir, "workflow-usage")
       assert.ok(existsSync(link), `skill symlink should exist: ${link}`)
       const target = readlinkSync(link)
       assert.ok(
         target.endsWith("opencode-dynamic-workflow/skills/workflow-usage"),
         `unexpected target: ${target}`
       )
+      assert.equal(existsSync(join(tmp, "skills", "workflow-usage")), false)
     } finally {
       rmSync(tmp, { recursive: true, force: true })
+      rmSync(skillsDir, { recursive: true, force: true })
       rmSync(home, { recursive: true, force: true })
     }
   })
 
   it("重复执行 idempotent（第二次运行不报错，软链目标不变）", () => {
     const tmp = mkdtempSync(join(tmpdir(), "install-test-"))
+    const skillsDir = mkdtempSync(join(tmpdir(), "install-agents-skills-"))
     const home = mkdtempSync(join(tmpdir(), "install-home-"))
     const fakeZshrc = join(home, ".zshrc")
     try {
-      install(tmp, fakeZshrc)
-      const out2 = install(tmp, fakeZshrc)
+      install(tmp, skillsDir, fakeZshrc)
+      const out2 = install(tmp, skillsDir, fakeZshrc)
       assert.ok(out2.includes("已存在且正确") || out2.includes("[next]"))
     } finally {
       rmSync(tmp, { recursive: true, force: true })
+      rmSync(skillsDir, { recursive: true, force: true })
       rmSync(home, { recursive: true, force: true })
     }
   })
 
   it("OPENCODE_WORKFLOW_ROOT 注册到 $ZSHRC", () => {
     const tmp = mkdtempSync(join(tmpdir(), "install-test-"))
+    const skillsDir = mkdtempSync(join(tmpdir(), "install-agents-skills-"))
     const home = mkdtempSync(join(tmpdir(), "install-home-"))
     const fakeZshrc = join(home, ".zshrc")
     writeFileSync(fakeZshrc, "")
     try {
-      install(tmp, fakeZshrc)
+      install(tmp, skillsDir, fakeZshrc)
       const rc = readFileSync(fakeZshrc, "utf8")
       assert.ok(
         rc.includes("export OPENCODE_WORKFLOW_ROOT="),
@@ -73,18 +80,20 @@ describe("install-opencode.sh", () => {
       )
     } finally {
       rmSync(tmp, { recursive: true, force: true })
+      rmSync(skillsDir, { recursive: true, force: true })
       rmSync(home, { recursive: true, force: true })
     }
   })
 
   it("原子写 .zshrc 保留已有内容", () => {
     const tmp = mkdtempSync(join(tmpdir(), "install-test-"))
+    const skillsDir = mkdtempSync(join(tmpdir(), "install-agents-skills-"))
     const home = mkdtempSync(join(tmpdir(), "install-home-"))
     const fakeZshrc = join(home, ".zshrc")
     const existingContent = "# my existing config\nalias ll='ls -la'\n"
     writeFileSync(fakeZshrc, existingContent)
     try {
-      install(tmp, fakeZshrc)
+      install(tmp, skillsDir, fakeZshrc)
       const rc = readFileSync(fakeZshrc, "utf8")
       assert.ok(
         rc.includes("# my existing config"),
@@ -100,6 +109,7 @@ describe("install-opencode.sh", () => {
       )
     } finally {
       rmSync(tmp, { recursive: true, force: true })
+      rmSync(skillsDir, { recursive: true, force: true })
       rmSync(home, { recursive: true, force: true })
     }
   })

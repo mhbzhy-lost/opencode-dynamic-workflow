@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NODE_BIN="${NODE_BIN:-node}"
 # 主仓脚本调用时通过 OPENCODE_CONFIG_DIR 决定目标目录
 OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
+AGENTS_SKILLS_DIR="${AGENTS_SKILLS_DIR:-$HOME/.agents/skills}"
 
 # 1. 安装 npm 依赖
 echo "[install] npm install in $ROOT"
@@ -17,15 +18,19 @@ echo "[install] npm install in $ROOT"
 # 详见 skills/workflow-usage/SKILL.md 的『编写自定义 workflow 脚本』章节。
 
 # 2. 软链 skill
-OPENCODE_SKILL_DIR="$OPENCODE_CONFIG_DIR/skills"
 SKILL_NAME="workflow-usage"
 SKILL_SRC="$ROOT/skills/$SKILL_NAME"
-SKILL_DST="$OPENCODE_SKILL_DIR/$SKILL_NAME"
+SKILL_DST="$AGENTS_SKILLS_DIR/$SKILL_NAME"
+LEGACY_SKILL_DST="$OPENCODE_CONFIG_DIR/skills/$SKILL_NAME"
 
 if [ ! -d "$SKILL_SRC" ]; then
   echo "[warn] skill 目录不存在: $SKILL_SRC（跳过 skill 注册）" >&2
 else
-  mkdir -p "$OPENCODE_SKILL_DIR"
+  mkdir -p "$AGENTS_SKILLS_DIR"
+  if [ -L "$LEGACY_SKILL_DST" ] && [ "$(readlink "$LEGACY_SKILL_DST")" = "$SKILL_SRC" ]; then
+    rm -f "$LEGACY_SKILL_DST"
+    echo "[ok] legacy skill 软链已移除: $LEGACY_SKILL_DST"
+  fi
   if [ -L "$SKILL_DST" ]; then
     existing_target=$(readlink "$SKILL_DST")
     if [ "$existing_target" = "$SKILL_SRC" ]; then
